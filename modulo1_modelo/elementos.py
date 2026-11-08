@@ -221,13 +221,28 @@ class Circuito:
     def obtener_o_crear_nodo(self, id_nodo: int, nombre: str = "") -> Nodo:
         """
         Obtiene un nodo existente por su ID o lo crea y registra si no existe.
+
+        Si el nodo ya existe con su etiqueta genérica (ej. 'N1') y se provee
+        un `nombre` descriptivo, se actualiza la etiqueta y se propaga el
+        nuevo objeto a los componentes ya registrados, para que todos
+        compartan la misma referencia de nodo.
         """
         if id_nodo not in self._nodos:
             self._nodos[id_nodo] = Nodo(id_nodo, nombre)
         elif nombre and self._nodos[id_nodo].nombre == f"N{id_nodo}":
             # Permite actualizar la etiqueta descriptiva si antes tenía el nombre genérico
-            self._nodos[id_nodo] = Nodo(id_nodo, nombre)
+            nuevo = Nodo(id_nodo, nombre)
+            self._nodos[id_nodo] = nuevo
+            for comp in self._componentes:
+                if comp.nodo_a.id_nodo == id_nodo:
+                    comp.nodo_a = nuevo
+                if comp.nodo_b.id_nodo == id_nodo:
+                    comp.nodo_b = nuevo
         return self._nodos[id_nodo]
+
+    def esta_registrado(self, componente: Componente) -> bool:
+        """Indica si `componente` es el mismo objeto registrado bajo su nombre."""
+        return self._mapa_componentes.get(componente.nombre) is componente
 
     def obtener_componente(self, nombre: str) -> Componente:
         """Busca y retorna un componente registrado por su nombre."""
@@ -302,6 +317,13 @@ class Circuito:
             comp_ctrl = self.obtener_componente(componente_o_nombre_control)
         else:
             comp_ctrl = componente_o_nombre_control
+            if not self.esta_registrado(comp_ctrl):
+                raise ValueError(
+                    f"La fuente CCVS '{nombre}' usa como control a "
+                    f"'{comp_ctrl.nombre}', pero ese objeto no está registrado en "
+                    "este circuito. Agregue primero el componente de control al "
+                    "circuito o páselo por su nombre."
+                )
 
         na = self.obtener_o_crear_nodo(id_nodo_pos)
         nb = self.obtener_o_crear_nodo(id_nodo_neg)
@@ -366,3 +388,23 @@ class Circuito:
             for c in self._componentes
             if isinstance(c, (FuenteVoltaje, FuenteVoltajeControladaCorriente))
         ]
+
+    def resumen_topologia(self) -> str:
+        """
+        Retorna un resumen legible de la topología (nodos y componentes),
+        útil para ejemplos, capturas de consola y verificación manual.
+        No resuelve el circuito: solo describe el modelo eléctrico.
+        """
+        lineas = [f"Circuito '{self.nombre}': {len(self.nodos_incognita)} nodo(s) + GND, "
+                  f"{len(self._componentes)} componente(s)"]
+        lineas.append("Nodos: " + ", ".join(
+            f"{n.nombre}(id={n.id_nodo})" for n in self.nodos))
+        for comp in self._componentes:
+            extra = ""
+            if isinstance(comp, FuenteVoltajeControladaCorriente):
+                extra = f" [control: i({comp.componente_control.nombre})]"
+            lineas.append(
+                f"  - {comp.nombre}: {comp.tipo} "
+                f"{comp.nodo_a.nombre} -> {comp.nodo_b.nombre} "
+                f"({comp.valor} {comp.unidad}){extra}")
+        return "\n".join(lineas)

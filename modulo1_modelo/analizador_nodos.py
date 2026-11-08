@@ -52,6 +52,40 @@ class SistemaEcuacionesNodos:
     mapa_nodos_indice: Dict[int, int]
     mapa_fuentes_v_indice: Dict[str, int]
 
+    def ecuacion_texto(self, fila: int) -> str:
+        """
+        Representa la ecuación de la fila `fila` como texto legible, en la forma
+        `(coef)·Incógnita + (coef)·Incógnita = término`, sin resolver el sistema.
+        Solo se muestran los coeficientes distintos de cero.
+        """
+        partes = [
+            f"({coef:.4g})·{etiqueta}"
+            for coef, etiqueta in zip(self.matriz_A[fila], self.etiquetas_incognitas)
+            if coef != 0
+        ]
+        lado_izq = " + ".join(partes) if partes else "0"
+        return f"E{fila + 1}: {lado_izq} = {self.vector_b[fila]:.4g}"
+
+    def ecuaciones_texto(self) -> List[str]:
+        """Retorna las `dim_total` ecuaciones del sistema como lista de textos."""
+        return [self.ecuacion_texto(i) for i in range(self.matriz_A.shape[0])]
+
+    def resumen_sistema(self) -> str:
+        """
+        Retorna un bloque de texto con las incógnitas, la matriz A, el vector b
+        y las ecuaciones del sistema, útil para ejemplos y capturas de consola.
+        """
+        lineas = [
+            f"Sistema MNA: {self.matriz_A.shape[0]} ecuaciones, "
+            f"incógnitas {self.etiquetas_incognitas}",
+            "Matriz A:",
+            str(self.matriz_A),
+            f"Vector b: {self.vector_b.tolist()}",
+            "Ecuaciones generadas:",
+            *self.ecuaciones_texto(),
+        ]
+        return "\n".join(lineas)
+
 
 class AnalizadorNodos:
     """
@@ -97,6 +131,18 @@ class AnalizadorNodos:
             if nodo.id_nodo not in nodos_conectados:
                 raise ValueError(
                     f"El nodo '{nodo.nombre}' (id={nodo.id_nodo}) está aislado y no tiene conexiones."
+                )
+
+        for ccvs in self.circuito.fuentes_ccvs:
+            ctrl = ccvs.componente_control
+            if ctrl is ccvs:
+                raise ValueError(
+                    f"La fuente CCVS '{ccvs.nombre}' no puede controlarse a sí misma."
+                )
+            if not self.circuito.esta_registrado(ctrl):
+                raise ValueError(
+                    f"La fuente CCVS '{ccvs.nombre}' referencia como control a "
+                    f"'{ctrl.nombre}', que no está registrado en este circuito."
                 )
 
     def construir_sistema(self) -> SistemaEcuacionesNodos:
