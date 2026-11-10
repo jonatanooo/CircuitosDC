@@ -23,7 +23,9 @@ from PySide6.QtGui import (
     QColor,
     QDrag,
     QFont,
+    QFontMetricsF,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QPolygonF,
@@ -185,6 +187,8 @@ class CableGraficoItem(QGraphicsLineItem):
         self.terminal_origen: TerminalGraficoItem = terminal_origen
         self.terminal_destino: TerminalGraficoItem = terminal_destino
         self.etiqueta_nodo: str = etiqueta_nodo or terminal_origen.etiqueta_nodo
+        self.voltaje_nodo: Optional[float] = None
+        self.resaltado_nodo = False
 
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         pen = QPen(QColor("#49504C"), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
@@ -207,6 +211,31 @@ class CableGraficoItem(QGraphicsLineItem):
         self.setLine(p1.x(), p1.y(), p2.x(), p2.y())
         self.update()
 
+    def boundingRect(self) -> QRectF:
+        # La etiqueta se dibuja fuera de la línea; Qt debe repintar esa zona también.
+        margen = max(20.0, self._ancho_etiqueta() / 2 + 2)
+        return super().boundingRect().adjusted(-margen, -22, margen, 4)
+
+    def _ancho_etiqueta(self) -> float:
+        return max(36.0, QFontMetricsF(QFont("Segoe UI", 8, QFont.Weight.Bold)).horizontalAdvance(self._texto_etiqueta()) + 14)
+
+    def _texto_etiqueta(self) -> str:
+        if self.voltaje_nodo is None:
+            return self.etiqueta_nodo
+        return f"{self.etiqueta_nodo} · {self.voltaje_nodo:.4g} V".replace('.', ',')
+
+    def establecer_voltaje(self, voltaje: Optional[float]) -> None:
+        if self.voltaje_nodo != voltaje:
+            self.prepareGeometryChange()
+            self.voltaje_nodo = voltaje
+            self.update()
+
+    def establecer_etiqueta(self, texto: str) -> None:
+        if texto != self.etiqueta_nodo:
+            self.prepareGeometryChange()
+            self.etiqueta_nodo = texto
+            self.update()
+
     def contextMenuEvent(self, event) -> None:
         """Permite eliminar un cable haciendo clic derecho sobre él."""
         menu = QMenu()
@@ -224,25 +253,25 @@ class CableGraficoItem(QGraphicsLineItem):
         widget: Optional[QWidget] = None,
     ) -> None:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self.isSelected():
-            self.setPen(QPen(QColor("#D9534F"), 2.8, Qt.PenStyle.SolidLine))
-        else:
-            self.setPen(QPen(QColor("#49504C"), 2.2, Qt.PenStyle.SolidLine))
-        super().paint(painter, option, widget)
+        color = QColor("#087b68") if self.resaltado_nodo else (QColor("#D9534F") if self.isSelected() else QColor("#49504C"))
+        painter.setPen(QPen(color, 4.0 if self.resaltado_nodo else (2.8 if self.isSelected() else 2.2),
+                            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(self.line())
 
         if self.etiqueta_nodo:
             linea = self.line()
             punto_medio = linea.center()
             painter.save()
             painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            rect_badge = QRectF(punto_medio.x() - 18, punto_medio.y() - 18, 36, 15)
+            ancho = self._ancho_etiqueta()
+            rect_badge = QRectF(punto_medio.x() - ancho / 2, punto_medio.y() - 19, ancho, 17)
             painter.setPen(QPen(QColor("#DCE1DD"), 1.0))
             painter.setBrush(QBrush(QColor(255, 255, 255, 220)))
             painter.drawRoundedRect(rect_badge, 4, 4)
             painter.setPen(
                 QColor("#2E6F46") if self.etiqueta_nodo != "GND" else QColor("#495057")
             )
-            painter.drawText(rect_badge, Qt.AlignmentFlag.AlignCenter, self.etiqueta_nodo)
+            painter.drawText(rect_badge, Qt.AlignmentFlag.AlignCenter, self._texto_etiqueta())
             painter.restore()
 
 
@@ -279,12 +308,15 @@ class ComponenteGraficoItem(QGraphicsItem):
         self.tipo_catalogo: str = tipo_catalogo
         self.valor_str: str = valor_str
         self.unidad_simbolo: str = unidad_simbolo
+        self.factor_unidad: float = 1.0
         self.orientacion: str = orientacion
         self.componente_control_ref: str = componente_control_ref
 
-        self.voltaje_lectura: str = "0,000 V"
-        self.corriente_lectura: str = "0,000 mA"
-        self.potencia_lectura: str = "0,000 W"
+        self.voltaje_lectura: str = "—"
+        self.corriente_lectura: str = "—"
+        self.potencia_lectura: str = "—"
+        self.corriente_animacion = 0.0
+        self.fase_animacion = 0.0
 
         # Habilitar banderas requeridas de QGraphicsItem
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
@@ -346,12 +378,23 @@ class ComponenteGraficoItem(QGraphicsItem):
         return cables
 
     def boundingRect(self) -> QRectF:
-        return QRectF(
-            -self.ANCHO_BASE / 2.0,
-            -self.ALTO_BASE / 2.0,
-            self.ANCHO_BASE,
-            self.ALTO_BASE,
+        ancho = self._ancho_etiquetas()
+        if self.orientacion == "H":
+            margen = max(55.0, ancho / 2 + 4)
+            return QRectF(-margen, -52, 2 * margen, 104)
+        return QRectF(-55, -52, 87 + ancho, 104)
+
+    def _ancho_etiquetas(self) -> float:
+        nombre = QFontMetricsF(QFont("Segoe UI", 9, QFont.Weight.Bold)).horizontalAdvance(self.id_ref)
+        valor = QFontMetricsF(QFont("Segoe UI", 8)).horizontalAdvance(
+            f"{float(self.valor_str) / self.factor_unidad:g} {self.unidad_simbolo}"
         )
+        return max(55.0, nombre, valor) + 8
+
+    def shape(self) -> QPainterPath:
+        forma = QPainterPath()
+        forma.addRect(QRectF(-30, -30, 60, 60))
+        return forma
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
@@ -374,9 +417,24 @@ class ComponenteGraficoItem(QGraphicsItem):
         elif accion_elegida == accion_rotar:
             self.alternar_orientacion()
 
+    def mouseDoubleClickEvent(self, event) -> None:
+        if self.scene() and hasattr(self.scene(), "componente_doble_clic"):
+            self.scene().componente_doble_clic.emit(self.id_ref)
+            event.accept()
+        else:
+            super().mouseDoubleClickEvent(event)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self.scene() and hasattr(self.scene(), "antes_de_cambio"):
+            self.scene().antes_de_cambio.emit()
+        super().mousePressEvent(event)
+
     def alternar_orientacion(self) -> None:
         if self.tipo_catalogo == "TIERRA":
             return
+        if self.scene() and hasattr(self.scene(), "antes_de_cambio"):
+            self.scene().antes_de_cambio.emit()
+        self.prepareGeometryChange()
         self.orientacion = "V" if self.orientacion == "H" else "H"
         if self.orientacion == "H":
             self.terminal_a.setPos(QPointF(-46.0, 0.0))
@@ -401,7 +459,7 @@ class ComponenteGraficoItem(QGraphicsItem):
             brush_sel = QBrush(QColor(225, 239, 229, 195))
             painter.setPen(pen_sel)
             painter.setBrush(brush_sel)
-            painter.drawRoundedRect(self.boundingRect().adjusted(4, 4, -4, -4), 8, 8)
+            painter.drawRoundedRect(QRectF(-51, -34, 102, 68), 8, 8)
 
         pen_linea = QPen(QColor("#49504C"), 2.0)
         brush_cuerpo = QBrush(QColor("#FFFFFF"))
@@ -450,9 +508,9 @@ class ComponenteGraficoItem(QGraphicsItem):
                 painter.drawLine(QPointF(5, -5), QPointF(12, 0))
                 painter.drawLine(QPointF(5, 5), QPointF(12, 0))
             else:
-                painter.drawLine(QPointF(0, 12), QPointF(0, -12))
-                painter.drawLine(QPointF(-5, -5), QPointF(0, -12))
-                painter.drawLine(QPointF(5, -5), QPointF(0, -12))
+                painter.drawLine(QPointF(0, -12), QPointF(0, 12))
+                painter.drawLine(QPointF(-5, 5), QPointF(0, 12))
+                painter.drawLine(QPointF(5, 5), QPointF(0, 12))
 
         elif self.tipo_catalogo == "FUENTE_CCVS":
             rombo = QPolygonF(
@@ -475,27 +533,43 @@ class ComponenteGraficoItem(QGraphicsItem):
 
         painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
         painter.setPen(QColor("#212529"))
+        ancho_etiqueta = self._ancho_etiquetas()
         if self.orientacion == "H":
             painter.drawText(
-                QRectF(-45, -34, 90, 18), Qt.AlignmentFlag.AlignCenter, self.id_ref
+                QRectF(-ancho_etiqueta / 2, -34, ancho_etiqueta, 18), Qt.AlignmentFlag.AlignCenter, self.id_ref
             )
             painter.setFont(QFont("Segoe UI", 8))
             painter.setPen(QColor("#5C6460"))
             painter.drawText(
-                QRectF(-50, 14, 100, 18),
+                QRectF(-ancho_etiqueta / 2, 14, ancho_etiqueta, 18),
                 Qt.AlignmentFlag.AlignCenter,
-                f"{self.valor_str} {self.unidad_simbolo}",
+                f"{float(self.valor_str) / self.factor_unidad:g} {self.unidad_simbolo}",
             )
         else:
             painter.drawText(
-                QRectF(26, -18, 48, 18),
+                QRectF(32, -18, ancho_etiqueta, 18),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 self.id_ref,
             )
             painter.setFont(QFont("Segoe UI", 8))
             painter.setPen(QColor("#5C6460"))
             painter.drawText(
-                QRectF(26, 0, 56, 18),
+                QRectF(32, 0, ancho_etiqueta, 18),
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                f"{self.valor_str} {self.unidad_simbolo}",
+                f"{float(self.valor_str) / self.factor_unidad:g} {self.unidad_simbolo}",
             )
+
+        # Marcador esquemático: el sentido sigue el signo de la corriente calculada.
+        if abs(self.corriente_animacion) > 1e-12:
+            avance = self.fase_animacion if self.corriente_animacion > 0 else 1 - self.fase_animacion
+            painter.setPen(QPen(QColor("#087b68"), 1.8))
+            painter.setBrush(QColor("#087b68"))
+            sentido = 1 if self.corriente_animacion > 0 else -1
+            if self.orientacion == "H":
+                x = -40 + 80 * avance
+                painter.drawLine(QPointF(x - 5 * sentido, 12), QPointF(x + 5 * sentido, 12))
+                painter.drawPolygon(QPolygonF([QPointF(x + 6 * sentido, 12), QPointF(x + 1 * sentido, 8), QPointF(x + 1 * sentido, 16)]))
+            else:
+                y = -40 + 80 * avance
+                painter.drawLine(QPointF(-15, y - 5 * sentido), QPointF(-15, y + 5 * sentido))
+                painter.drawPolygon(QPolygonF([QPointF(-15, y + 6 * sentido), QPointF(-19, y + sentido), QPointF(-11, y + sentido)]))

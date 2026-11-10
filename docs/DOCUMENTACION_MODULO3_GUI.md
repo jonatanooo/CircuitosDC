@@ -1,122 +1,127 @@
-# Documentación Técnica y UX — Módulo 3: Interfaz Gráfica de Usuario en PySide6 (Qt)
+# Módulo 3 — Interfaz gráfica del simulador de circuitos DC
 
-**Responsabilidad del Integrante 3:** Diseño e implementación de la arquitectura visual en **PySide6**, experiencia de usuario (UX), lienzo vectorial interactivo (`QGraphicsView` / `QGraphicsScene`) y orquestación mediante el sistema de **Señales y Slots (Signals & Slots)** con el Módulo 1 (Modelo Eléctrico) y el Módulo 2 (Motor Numérico/Simbólico).
+## Objetivo y alcance
 
----
+La interfaz de escritorio permite construir y editar circuitos de corriente continua, ejecutar el análisis nodal modificado (MNA) y consultar los resultados calculados por los módulos de modelo y motor. Está implementada en Python con **PySide6**, los enlaces de Qt para Python. La versión revisada corresponde a la ventana **Simulador de Circuitos DC — Fase 3**.
 
-## 1. Jerarquía de Layouts y Widgets Principales de Qt
+La interfaz admite resistencias, fuentes independientes de voltaje y corriente, una fuente de voltaje controlada por corriente (CCVS) y tierra. Se puede elegir **Nodos (MNA)** o **Mallas**, una primera implementación basada en corrientes de lazos independientes.
 
-La aplicación sigue el patrón de diseño **Workbench de Tres Columnas con Panel Central Dividido**, encapsulado dentro de la clase [`VentanaSimuladorDC`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/interfaz_pyside6/ventana_principal.py#L387-L840) (subclase de `QMainWindow`).
+## Vista general
 
-```mermaid
-flowchart TD
-    MW["QMainWindow (VentanaSimuladorDC)"]
-    MB["QMenuBar (Archivo, Editar, Vista, Análisis, Ayuda)"]
-    TB["QToolBar#BarraSuperior (+Nuevo, Abrir, Guardar | Nodos/Mallas | Restablecer, Analizar circuito)"]
-    SH["QSplitter Horizontal (Cuerpo Principal)"]
+![Ventana inicial sin resultados](capturas/interfaz_inicial.png)
 
-    PI["QFrame (Panel Izquierdo)"]
-    PC["QWidget (Panel Central)"]
-    PD["QFrame (Panel Derecho - Propiedades)"]
+Al iniciar, el lienzo carga el circuito de referencia de la fase 1. Los resultados y lecturas de propiedades aparecen vacíos hasta ejecutar la simulación. Las áreas principales son:
 
-    TREE["QTreeWidget#ArbolCircuito (Componentes y Nodos)"]
-    PAL["QVBoxLayout (Botones Insertar Componente)"]
+- **Menú Archivo:** Nuevo limpia el lienzo; Abrir admite archivos JSON del simulador y esquemas LTspice `.asc` compatibles. Guardar como crea archivos JSON del simulador.
+- **Menú Editar:** Deshacer permite recuperar el estado anterior con **Ctrl+Z**; también se puede eliminar la selección.
+- **Barra superior:** muestra el método de análisis, Restablecer —que carga el circuito de referencia— e Iniciar simulación / Detener simulación.
+- **Comparar resultados:** aparece durante la simulación y compara el circuito de fase 1 con los valores documentados en Qucs-S/ngspice. El error se calcula como `|simulado − referencia| / |referencia| × 100`. Para una topología diferente no se genera una comparación automática; si se modificaron parámetros se muestra un aviso.
+- **Panel izquierdo:** lista los componentes y nodos del circuito y muestra la paleta de componentes por categorías desplegables. Ambas secciones tienen desplazamiento vertical cuando hace falta.
+- **Lienzo central:** contiene el esquema, los modos Seleccionar y Mano y un control de zoom. En modo Mano se desplaza el lienzo arrastrándolo en ambas direcciones.
+- **Panel derecho:** muestra las propiedades del elemento seleccionado, permite cambiar su valor y eliminarlo, e indica si existe una referencia de tierra conectada. El indicador de tierra es informativo: se añade conectando un componente Tierra, no activando la casilla.
+- **Resultados:** la pestaña Punto de operación presenta variables `V(nodo)`, `I(componente)` y `P(componente)` con sus unidades. Detalle por elemento muestra las tablas de nodos y componentes; las pestañas Ecuaciones y Matriz del sistema muestran el desarrollo matemático. Al detener la simulación o modificar el circuito se limpian los resultados.
 
-    SV["QSplitter Vertical (Panel Central)"]
-    WS["Sección Superior: Espacio de Trabajo"]
-    RES["Sección Inferior: Panel de Resultados"]
+## Construcción y edición de un circuito
 
-    GV["QGraphicsView + EscenaEsquematicoDC (QGraphicsScene)"]
+1. En **Archivo → Nuevo**, limpiar el lienzo si se desea comenzar desde cero. Esta acción reemplaza el contenido actual; guardar primero si se necesita conservarlo.
+2. Abrir una categoría de **Componentes** y arrastrar cada elemento al lienzo. En la paleta se pueden agregar resistencias, fuentes independientes, fuentes CCVS y tierra.
+3. En el modo **Seleccionar**, mover los componentes y arrastrar desde un terminal hasta otro para crear un cable. Los terminales conectados forman un nodo. Se puede eliminar un cable o componente con la selección y la tecla Supr, o usando su menú contextual.
+4. Hacer doble clic sobre un componente para modificar su etiqueta, valor y unidad. En una CCVS también se selecciona el componente cuya corriente sirve de control. Guardar aplica los cambios; Cancelar los descarta. El panel derecho también permite cambiar el valor del elemento seleccionado.
+5. Conectar una tierra y asegurarse de que los terminales de los componentes eléctricos estén conectados. Pulsar **Iniciar simulación**. La ventana de estado informa si el cálculo terminó o describe el error. Para terminar la animación y limpiar los resultados, pulsar **Detener simulación**.
+6. Usar **Archivo → Guardar como** para conservar el circuito y **Archivo → Abrir** para recuperarlo. Al abrirlo se debe ejecutar la simulación nuevamente para generar resultados.
 
-    CARDS["QFrame Tarjetas: Voltajes de Nodo (N1, N2) y Corriente Total"]
-    TBL["QTableWidget#TablaLecturas (Lecturas por Componente)"]
-    EQ["QTextEdit (Ecuaciones LCK / Fuentes)"]
-    MAT["QTextEdit (Matriz del Sistema A · v = b)"]
+![Editor de componente](capturas/editar_componente.png)
 
-    INP["QLineEdit#InputValorPropiedad + QPushButton (Aplicar valor)"]
-    INFO["QGridLayout (Terminales N1/N2, Check N0, Lecturas V e I)"]
+El editor convierte las unidades seleccionadas a unidades base para los cálculos. Por ejemplo, 0,005 kΩ equivale a 5 Ω. Una resistencia debe ser mayor que cero. Las etiquetas deben ser únicas. Las modificaciones y la eliminación pueden revertirse con Ctrl+Z; el proyecto mantiene un historial limitado y no ofrece rehacer.
 
-    MW --> MB
-    MW --> TB
-    MW --> SH
-    SH --> PI
-    SH --> PC
-    SH --> PD
+## Simulación y lectura de resultados
 
-    PI --> TREE
-    PI --> PAL
+![Simulación del circuito de referencia](capturas/interfaz_simulacion.png)
 
-    PC --> SV
-    SV --> WS
-    SV --> RES
+El resultado del circuito de referencia incluye cinco nodos: GND, N_Vs, V1, V2 y V3. Los valores observados son 0 V, 20 V, 16 V, 10 V y 9,6 V, respectivamente. La corriente por R_5 es 1,2 A. La fuente dependiente vale 8 × 1,2 A = 9,6 V. Las tablas se generan a partir del circuito resuelto y no dependen de que este tenga una cantidad fija de nodos.
 
-    WS --> GV
-    RES --> CARDS
-    RES --> TBL
-    RES --> EQ
-    RES --> MAT
+Las flechas durante la simulación indican el sentido de las corrientes calculadas según los terminales de cada componente. Son una representación visual del resultado estacionario de corriente continua; no muestran una simulación transitoria ni el movimiento físico de cargas a escala. La potencia negativa de una fuente indica que entrega potencia según la convención de signos del motor.
 
-    PD --> INP
-    PD --> INFO
+Durante la simulación, las etiquetas de los cables muestran el potencial del nodo respecto a tierra. Al seleccionar un voltaje en resultados se resaltan los cables correspondientes; al seleccionar una corriente o potencia se resalta su componente. La fila seleccionada permanece destacada.
+
+![Comparación con Qucs-S](capturas/comparacion_resultados.png)
+
+El panel inferior permite consultar el punto de operación, los resultados por componente, las ecuaciones generadas con SymPy y la matriz A, el vector b y la solución del sistema. En `I(componente)` se utiliza como referencia el sentido del terminal inicial al final; `P(componente)` aplica la convención pasiva. Las tablas y cajas de texto ofrecen desplazamiento vertical cuando el contenido excede el espacio visible.
+
+## Importar un esquema de LTspice
+
+En **Archivo → Abrir**, seleccionar un archivo `.asc`. La importación está limitada a resistencias estándar `res`/`res2`, fuentes independientes DC `voltage`/`current`, fuente CCVS `h` controlada por una fuente de voltaje y tierra. Se admiten valores numéricos con prefijos SPICE comunes y las orientaciones indicadas por el importador. Las fuentes con polaridad gráfica invertida, símbolos desconocidos, parámetros adicionales y directivas distintas de `.op` se rechazan con una descripción; no se ignoran para fabricar un resultado.
+
+Los cables se reconstruyen como conexiones directas entre terminales: se conserva la conectividad admitida, pero no el trazado exacto ni la apariencia de LTspice. El archivo importado se puede guardar en JSON; el programa no exporta `.asc`. Es necesario revisar el esquema antes de simular.
+
+Se comprobó el archivo de fase 1 proporcionado por el equipo. LTspice utiliza una fuente de 0 V como sensor de corriente: por ello aparecen dos nodos a 10 V, uno a cada lado del sensor. La corriente medida es 1,2 A y la resistencia de 5 Ω disipa 7,2 W.
+
+![Resultado de importar el circuito de LTspice](capturas/ltspice_resultados.png)
+
+![Ventana de estado de simulación](capturas/estado_simulacion.png)
+
+## Arquitectura
+
+- `VentanaSimuladorDC` (`QMainWindow`) organiza menús, barras, paneles y resultados y conecta los controles mediante señales y slots.
+- `EscenaEsquematicoDC` (`QGraphicsScene`) administra componentes, terminales, cables y la conectividad; `VistaEsquematicoDC` (`QGraphicsView`) presenta el lienzo, selección, desplazamiento y zoom.
+- `componentes_graficos.py` implementa la paleta arrastrable y los elementos gráficos. La posición de un componente actualiza las líneas conectadas.
+- Al simular, la interfaz traduce la conectividad gráfica a `Circuito`, `AnalizadorNodos`, `MotorNumericoNumPy` y `AnalizadorSimbolicoYResultados`. Los módulos matemáticos forman y resuelven el sistema y devuelven el reporte a la interfaz.
+- El temporizador Qt actualiza la posición visual de las flechas mientras la simulación está activa. La modificación del circuito detiene la animación e invalida los resultados mostrados.
+
+El análisis de mallas construye una base de lazos independientes mediante un árbol generador. Las corrientes de lazo permiten obtener las corrientes de rama; las fuentes ideales de corriente añaden restricciones de corriente y voltajes desconocidos, mediante una formulación de supermalla generalizada. Una fuente CCVS utiliza la corriente de su rama de control. Las corrientes de lazo de la matriz dependen de la base generada y no tienen por qué coincidir con las corrientes de las caras visibles del dibujo. A partir de las tensiones de rama se recuperan los voltajes nodales para presentar los resultados habituales.
+
+En la pestaña **Matriz del sistema**, las filas E1, E2… representan ecuaciones y las columnas de A siguen el orden de las incógnitas. Las tablas muestran A, la solución x y el vector b; se puede pasar el cursor sobre un valor para consultar más cifras. Si se elige Mallas, x contiene corrientes de lazo y, cuando corresponda, voltajes de fuentes de corriente; si se elige Nodos, contiene voltajes nodales y corrientes de fuentes de voltaje.
+
+![Matriz del sistema de lazos](capturas/matriz_mallas.png)
+
+Código principal: [ventana_principal.py](../interfaz_pyside6/ventana_principal.py), [componentes_graficos.py](../interfaz_pyside6/componentes_graficos.py).
+
+## Pruebas realizadas
+
+Entorno de la revisión: Windows, Python 3.14.8, PySide6 6.12.0, NumPy 2.5.4 y SymPy 1.14.0. Las versiones son las observadas en este equipo; `requirements.txt` establece versiones mínimas, no versiones fijadas.
+
+La suite se ejecuta desde la raíz del repositorio:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m unittest test_circuito_drag_drop
 ```
 
-### Desglose Técnico por Zona
+Si se utiliza otro entorno virtual, sustituir la ruta de Python por la correspondiente. Los casos añadidos en [test_flujo_interfaz.py](../tests/test_flujo_interfaz.py) y [test_nodos_interfaz.py](../tests/test_nodos_interfaz.py) cubren:
 
-1. **Barra Superior (`QMenuBar` + `QToolBar`):**
-   * Implementada en [`_construir_barra_herramientas`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/interfaz_pyside6/ventana_principal.py#L411-L469).
-   * Agrupa las acciones de gestión de archivo (`+ Nuevo`, `Abrir`, `Guardar`), un selector segmentado exclusivo construido con `QButtonGroup` (`Nodos` / `Mallas`), un espaciador elástico (`QSizePolicy.Expanding`) y los botones de acción global: `Restablecer` y el botón de llamado a la acción (CTA) destacado `Analizar circuito`.
-2. **Divisor Principal (`QSplitter` Horizontal):**
-   * Configurado en [`_construir_cuerpo_principal`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/interfaz_pyside6/ventana_principal.py#L474-L499) con proporciones de estiramiento `setStretchFactor(1, 1)` para que el área central absorba el redimensionamiento de pantalla mientras los paneles laterales mantienen su ancho ergonómico.
-3. **Panel Izquierdo — Navegación e Inserción (`QFrame` + `QVBoxLayout`):**
-   * **Circuito Abierto (`QTreeWidget`):** Muestra jerárquicamente el proyecto activo (`circuito-ejemplo`), la rama `Componentes` (`V1`, `R1`, `R2`, `R3` con sus valores nominales alineados a la derecha) y la rama `Nodos` (`N1 · N2 · N0`).
-   * **Insertar Componente (`QPushButton` estilizados):** Paleta vertical de herramientas para instanciar `Resistencia`, `Fuente de voltaje`, `Fuente de corriente`, `Conexión` y `Tierra`.
-4. **Panel Central — Divisor Vertical (`QSplitter` Vertical):**
-   * **Subpanel Superior (Espacio de Trabajo):** Contiene la cabecera informativa, el indicador de estado (`BadgeEstado: • Análisis completo`) y el lienzo interactivo basado en `QGraphicsView` y [`EscenaEsquematicoDC`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/interfaz_pyside6/ventana_principal.py#L244-L380) (`QGraphicsScene`) con renderizado suavizado (`QPainter.Antialiasing`).
-   * **Subpanel Inferior (Resultados):** Organizado mediante un `QVBoxLayout` que combina dos filas principales:
-     * *Fila Superior:* A la izquierda, tarjetas métricas (`QFrame`) para los **Voltajes de Nodo** (`N1 respecto a N0 = 12 V`, `N2 respecto a N0 = 6,545 V`) y **Corriente total** (`54,545 mA`); a la derecha, un `QTableWidget` de 4 columnas (`Componente`, `Referencia`, `Voltaje`, `Corriente`).
-     * *Fila Inferior:* Dos tarjetas simétricas con visores enriquecidos (`QTextEdit` en modo solo lectura con formato HTML matemático) para mostrar las **Ecuaciones** del método de nodos y la **Matriz del sistema** ($A \cdot v = b$).
-5. **Panel Derecho — Inspector de Propiedades Contextual (`QFrame`):**
-   * Implementado en [`_crear_panel_derecho`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/interfaz_pyside6/ventana_principal.py#L728-L824). Muestra un badge con el identificador activo (`R1`), su categoría (`Resistencia`), un campo `QLineEdit` acompañado de su unidad física (`Ω` o `V`), el botón `Aplicar valor`, un `QGridLayout` con las terminales inicial/final, un `QCheckBox` de verificación de tierra (`Referencia N0 definida`) y las lecturas particulares del componente.
+| Caso | Comprobación | Resultado |
+|---|---|---|
+| Construir un circuito sencillo | Eventos de soltar de Qt para fuente, resistencia y tierra; conexión de terminales con eventos de ratón; fuente de 12 V y resistencia de 10 Ω | Correcto: 1,2 A |
+| Guardar y abrir | Archivo JSON temporal; se recuperan los tres cables y se vuelve a simular | Correcto |
+| Editar y deshacer | Doble clic, cambio de etiqueta y de 0,005 kΩ a 5 Ω; actualización de referencia CCVS; Ctrl+Z con foco en el lienzo | Correcto |
+| Seleccionar y mover | Selección de R_5, desplazamiento con el ratón, actualización del cable conectado y recuperación de la posición | Correcto |
+| Validaciones | Terminal desconectado, resistencia de 0 Ω y ausencia de tierra; el indicador cambia al eliminar tierra | Correcto para estos casos |
+| Resultados dinámicos | Sin resultados antes de simular; cinco nodos en el circuito original y seis en un circuito modificado; limpieza tras edición | Correcto |
+| Navegación | Zoom al 150 % y desplazamiento con Mano en ambos ejes | Correcto en la prueba automatizada |
+| Motor | Análisis nodal y lazos, fuentes de corriente y flotantes, sistema singular y CCVS de fase 1; contraste entre ambos métodos | Correcto para los casos incluidos |
 
----
+Estas son pruebas automatizadas de Qt: la prueba de arrastrar envía eventos de soltar al lienzo y la de conexión envía eventos de ratón a la vista. No sustituyen una prueba manual completa del arrastre real de la paleta, menús contextuales, todos los formatos de archivo o todas las combinaciones de componentes. Las pruebas de interfaz se ejecutan con la plataforma Qt `offscreen`; aparecen advertencias de deprecación de constructores de eventos en PySide6 6.12, pero no afectan al resultado de estas pruebas.
 
-## 2. Flujo de Interacción del Usuario (UX)
+### Tamaños de ventana observados
 
-### 2.1 Inserción y Exploración de Componentes
-1. El usuario visualiza en el panel izquierdo la estructura completa del circuito en el árbol **CIRCUITO ABIERTO** y dispone en la mitad inferior de los botones de la sección **INSERTAR COMPONENTE**.
-2. Al seleccionar una herramienta de inserción (como `Resistencia`), el botón adquiere el estilo visual activo (fondo verde suave `#E7F0E9`) indicando qué elemento se colocará en el lienzo.
+Las siguientes capturas se obtuvieron de la ventana de Qt en este equipo. Los tamaños son dimensiones de la ventana de la aplicación, no resoluciones físicas de pantalla.
 
-### 2.2 Selección Sincronizada y Edición de Propiedades
-La interfaz implementa **selección omnidireccional sincronizada** a través del método [`_sincronizar_seleccion`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/interfaz_pyside6/ventana_principal.py#L830-L868):
-1. El usuario puede hacer clic sobre un componente en cualquiera de las tres vistas:
-   * Directamente sobre el símbolo gráfico en el lienzo (`QGraphicsScene`).
-   * Sobre el ítem correspondiente en el árbol izquierdo (`QTreeWidget`).
-   * Sobre la fila del componente en la tabla inferior (`QTableWidget`).
-2. Inmediatamente:
-   * El lienzo dibuja un recuadro translúcido de enfoque detrás del componente seleccionado (ej. `R1`).
-   * El panel derecho (**PROPIEDADES**) actualiza su cabecera, muestra sus nodos de conexión (`Entre N1 y N2`), carga su valor actual (`100`) en el `QLineEdit` y despliega su voltaje (`5,455 V`) y corriente (`54,545 mA`).
-3. Cuando el usuario modifica el número en el `QLineEdit` y pulsa **"Aplicar valor"**:
-   * El slot [`_slot_aplicar_valor_propiedad`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/interfaz_pyside6/ventana_principal.py#L880-L907) valida que el número sea estrictamente mayor que cero ($> 0$).
-   * Se actualiza instantáneamente la etiqueta del componente en el `QTreeWidget` y en el esquemático del `QGraphicsScene`.
-   * El badge superior cambia a `• Pendiente de analizar` para indicar al usuario que los resultados mostrados corresponden a una corrida previa.
+| Tamaño solicitado | Tamaño obtenido | Observación |
+|---|---|---|
+| 1420 × 920 | 1420 × 920 | Paneles visibles; la etiqueta inferior de tierra queda parcialmente recortada con el zoom inicial. |
+| 1280 × 720 | 1280 × 720 | Parte del esquema queda fuera de la vista inicial; las tablas muestran menos filas y requieren desplazamiento. |
+| 1024 × 768 | 1086 × 768 | Qt mantiene un ancho mínimo aproximado de 1086 px; parte del circuito queda fuera de la vista inicial. |
+| 900 × 600 | 1086 × 600 | No alcanza el ancho solicitado y la altura deja poco espacio visible para esquema y resultados. |
 
-### 2.3 Ejecución del Cálculo y Visualización de Resultados
-Al presionar el botón destacado **"Analizar circuito"** en la barra superior:
-1. Se ejecuta el slot [`_slot_analizar_circuito`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/interfaz_pyside6/ventana_principal.py#L918-L953).
-2. Se actualizan las tarjetas de **Voltajes de Nodo**, **Corriente Total**, las filas de la tabla **Lecturas por componente**, las cajas de **Ecuaciones** y **Matriz del sistema**, y las lecturas puntuales del panel derecho.
-3. El indicador de estado del espacio de trabajo vuelve a `• Análisis completo`.
+![Ventana de 1280 por 720](capturas/interfaz_1280x720.png)
 
----
+![Ventana con tamaño real de 1086 por 600](capturas/interfaz_1086x600.png)
 
-## 3. Arquitectura de Integración mediante Señales y Slots (Módulos 1, 2 y 3)
+Para ver una parte del esquema que queda fuera del lienzo se puede reducir el zoom o desplazar la vista con Mano. Mejorar el ajuste inicial al tamaño disponible y la adaptación a ventanas menores de 1086 px sigue pendiente. Las capturas completas están en [capturas](capturas/).
 
-La comunicación entre la interfaz gráfica (**Módulo 3**) y los motores de backend (**Módulos 1 y 2**) está desacoplada siguiendo el patrón **Modelo-Vista-Controlador (MVC)** apoyado en `Signal` y `Slot` de PySide6:
+## Limitaciones y trabajo pendiente
 
-| Evento en la Interfaz (Señal Qt) | Slot Receptor en `VentanaSimuladorDC` | Acción con Módulo 1 y Módulo 2 |
-| :--- | :--- | :--- |
-| `EscenaEsquematicoDC.componente_seleccionado(str)` | `_sincronizar_seleccion(id_comp)` | Consulta los metadatos del componente y refresca el Panel Derecho de Propiedades. |
-| `QTreeWidget.itemClicked(QTreeWidgetItem, int)` | `_slot_item_arbol_clic` | Extrae el ID del elemento desde `Qt.UserRole` y sincroniza el lienzo y el inspector. |
-| `QPushButton("Aplicar valor").clicked()` | `_slot_aplicar_valor_propiedad` | Valida la entrada del `QLineEdit`, actualiza el valor nominal del objeto [`Componente`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/modulo1_modelo/elementos.py#L38-L77) en el Módulo 1 y redibuja la escena. |
-| `QPushButton("Analizar circuito").clicked()` | `_slot_analizar_circuito` | 1. Instancia [`Circuito`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/modulo1_modelo/elementos.py#L160-L250) y ejecuta [`AnalizadorNodos.construir_sistema()`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/modulo1_modelo/analizador_nodos.py#L90-L195) (**Módulo 1**).<br>2. Pasa el sistema a [`MotorNumericoNumPy.resolver()`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/modulo2_motor/resolvedor_numpy.py#L49-L107) y [`AnalizadorSimbolicoYResultados.calcular_magnitudes_circuito()`](file:///c:/Users/Imprenta/Desktop/CALCULADORA/modulo2_motor/simbolico_sympy.py#L123-L185) (**Módulo 2**).<br>3. Vuelca los resultados en las tarjetas, `QTableWidget` y visores de ecuaciones. |
-| `QPushButton("Restablecer").clicked()` | `_slot_restablecer_valores` | Restaura los parámetros por defecto del circuito, reconstruye el árbol y dispara un nuevo análisis. |
-
+- Mallas es una primera implementación de lazos independientes para los componentes DC enumerados; requiere un circuito conectado a tierra y al menos un lazo cerrado. Aún debe ampliarse su validación con más topologías. No es un simulador general de componentes de CA o transitorios.
+- La selección de tierra se realiza mediante un componente Tierra y conexiones; la casilla del panel derecho solo informa su estado.
+- La documentación y pruebas de esta sección no constituyen una comparación con LTspice ni Qucs-S; esa comparación y sus errores porcentuales corresponden a la validación de resultados del proyecto.
+- Antes de entregar el trabajo, completar una revisión manual de accesibilidad y de arrastre real en la computadora de presentación, generar las capturas finales que el equipo necesite y verificar el paquete en otro equipo.

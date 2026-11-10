@@ -16,14 +16,18 @@ Incorpora:
 """
 
 import sys
+import json
+import math
+from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from PySide6.QtCore import QLineF, QPointF, Qt, Signal
+from PySide6.QtCore import QLineF, QPointF, Qt, Signal, QTimer
 from PySide6.QtGui import (
     QAction,
     QBrush,
     QColor,
     QFont,
+    QIcon,
     QKeySequence,
     QPainter,
     QPen,
@@ -33,7 +37,12 @@ from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QFrame,
+    QFileDialog,
     QGraphicsLineItem,
     QGraphicsScene,
     QGraphicsView,
@@ -47,9 +56,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QScrollArea,
+    QSlider,
+    QToolBox,
+    QToolButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTextEdit,
     QToolBar,
     QTreeWidget,
@@ -65,12 +79,15 @@ from interfaz_pyside6.componentes_graficos import (
     ComponenteGraficoItem,
     TerminalGraficoItem,
 )
+from interfaz_pyside6.importador_asc import importar_asc
+from interfaz_pyside6.comparacion_fase1 import comparar_fase1
 from modulo1_modelo import AnalizadorNodos, Circuito
 from modulo2_motor import (
     AnalizadorSimbolicoYResultados,
     ErrorCircuitoSingular,
     MotorNumericoNumPy,
 )
+from modulo2_motor.analizador_mallas import AnalizadorMallas
 
 
 # =============================================================================
@@ -78,6 +95,25 @@ from modulo2_motor import (
 # =============================================================================
 
 ESTILO_QSS = """
+QWidget { color: #1d3835; font-family: "Segoe UI"; }
+QDialog, QMessageBox { background-color: #f5faf8; color: #1d3835; }
+QLineEdit, QComboBox { background-color: #ffffff; color: #1d3835; border: 1px solid #bcd4ce; border-radius: 6px; padding: 7px; selection-background-color: #bce4db; selection-color: #173c36; }
+QComboBox QAbstractItemView { background-color: #ffffff; color: #1d3835; selection-background-color: #d9eee9; selection-color: #173c36; }
+QToolBox, QToolBox > QWidget, QToolBox > QWidget > QWidget { background-color: #f4faf8; color: #1d3835; border: 0; }
+QToolBox::tab { min-height: 32px; padding: 6px 10px; }
+QStatusBar { background-color: #edf6f3; color: #345d54; }
+QTextEdit, QTreeWidget, QTableWidget { color: #172b3a; background-color: #ffffff; }
+QMenu { background-color: #ffffff; color: #172b3a; }
+QMenu::item { padding: 8px 32px 8px 18px; }
+QMenu::item:selected { background-color: #dcefeb; color: #123c38; }
+QPushButton { color: #172b3a; background-color: #f4f8f8; border: 1px solid #cbdcda; border-radius: 6px; padding: 6px 10px; }
+QPushButton:hover { background-color: #dcefeb; }
+QPushButton:checked { background-color: #bce4db; color: #123c38; border: 1px solid #48a691; }
+QToolBox::tab { background: #edf4f3; color: #284942; border: 1px solid #d5e3e0; border-radius: 5px; padding: 8px; font-weight: 600; }
+QToolBox::tab:selected { background: #d9eee9; color: #15584c; }
+QSlider::groove:horizontal { height: 5px; background: #d5e3e0; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #15947f; border-radius: 2px; }
+QSlider::handle:horizontal { background: #087c6c; width: 14px; margin: -5px 0; border-radius: 7px; }
 QMainWindow, QWidget#FondoPrincipal {
     background-color: #F8F9F8;
     color: #212529;
@@ -139,7 +175,7 @@ QPushButton.BotonSegmento:checked {
     border: 1px solid #DCE1DD;
 }
 QPushButton#BotonAnalizar {
-    background-color: #555E58;
+    background-color: #147b69;
     color: #FFFFFF;
     border: none;
     border-radius: 7px;
@@ -148,7 +184,7 @@ QPushButton#BotonAnalizar {
     font-size: 13px;
 }
 QPushButton#BotonAnalizar:hover {
-    background-color: #434B46;
+    background-color: #0d6657;
 }
 QFrame.PanelBlanco {
     background-color: #FFFFFF;
@@ -170,6 +206,7 @@ QTreeWidget#ArbolCircuito {
     background-color: transparent;
     font-size: 12px;
     outline: 0;
+    color: #172b3a;
 }
 QTreeWidget#ArbolCircuito::item {
     padding: 4px 6px;
@@ -236,7 +273,10 @@ QTableWidget#TablaLecturas {
     selection-background-color: #E7F0E9;
     selection-color: #1E3A28;
     outline: 0;
+    color: #172b3a;
 }
+QTableWidget#TablaLecturas::item:hover { background-color: #e7f4ef; color: #164d41; }
+QTableWidget#TablaLecturas::item:selected { background-color: #cce9df; color: #123f35; }
 QHeaderView::section {
     background-color: #FFFFFF;
     color: #7A827C;
@@ -256,6 +296,25 @@ QLineEdit#InputValorPropiedad {
     font-weight: 600;
     color: #212529;
 }
+QDialog, QMessageBox { background-color: #f5faf8; color: #1d3835; }
+QDialog QLabel, QMessageBox QLabel { color: #1d3835; background: transparent; }
+QDialog QLineEdit, QDialog QComboBox { background: #ffffff; color: #1d3835; border: 1px solid #bcd4ce; border-radius: 6px; padding: 7px; }
+QToolButton#Categoria { background: #e8f3ef; color: #28554a; border: 1px solid #cfdfda; border-radius: 6px; text-align: left; padding: 8px; font-weight: 600; }
+QToolButton#Categoria:hover { background: #d9eee6; }
+QTabWidget::pane { border: 1px solid #d6e6e1; border-radius: 6px; background: #ffffff; }
+QTabBar::tab { background: #edf6f3; color: #31584f; padding: 7px 14px; margin-right: 3px; border-top-left-radius: 5px; border-top-right-radius: 5px; }
+QTabBar::tab:selected { background: #d7eee7; color: #165749; font-weight: 600; }
+QScrollArea { border: none; background: #ffffff; }
+QScrollArea > QWidget > QWidget { background: #ffffff; }
+QAbstractScrollArea::corner { background: #ffffff; border: none; }
+QScrollBar:vertical { background: #f5faf8; width: 7px; border: none; }
+QScrollBar:horizontal { background: #f5faf8; height: 7px; border: none; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: #a8c9bf; border-radius: 3px; min-height: 24px; min-width: 24px; }
+QScrollBar::handle:hover { background: #6fa99a; }
+QScrollBar::add-page, QScrollBar::sub-page { background: #f5faf8; border: none; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QPushButton#BotonAnalizar { background: #147b69; color: white; }
+QPushButton#BotonAnalizar:hover { background: #0d6657; }
 """
 
 
@@ -274,13 +333,15 @@ class EscenaEsquematicoDC(QGraphicsScene):
     """
 
     componente_seleccionado = Signal(str)
+    antes_de_cambio = Signal()
+    componente_doble_clic = Signal(str)
     componente_soltado = Signal(object)
     conexion_creada = Signal(object)
     elemento_eliminado = Signal(str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setSceneRect(0, 0, 880, 360)
+        self.setSceneRect(-1200, -900, 3280, 2160)
         self.componentes_graficos: Dict[str, ComponenteGraficoItem] = {}
         self.cables_graficos: List[CableGraficoItem] = []
 
@@ -303,6 +364,7 @@ class EscenaEsquematicoDC(QGraphicsScene):
 
     def eliminar_cable(self, cable: CableGraficoItem) -> None:
         """Desconecta un cable de sus dos terminales y lo remueve de la escena."""
+        self.antes_de_cambio.emit()
         if cable in self.cables_graficos:
             self.cables_graficos.remove(cable)
         cable.desconectar_de_terminales()
@@ -317,6 +379,8 @@ class EscenaEsquematicoDC(QGraphicsScene):
         """
         if id_ref not in self.componentes_graficos:
             return False
+
+        self.antes_de_cambio.emit()
 
         comp_item = self.componentes_graficos.pop(id_ref)
 
@@ -367,6 +431,8 @@ class EscenaEsquematicoDC(QGraphicsScene):
         """Crea un `CableGraficoItem` entre `term_a` y `term_b`, unificando su nodo eléctrico."""
         if term_a is term_b or term_a.componente_padre is term_b.componente_padre:
             return None
+
+        self.antes_de_cambio.emit()
 
         if id_nodo is not None:
             nodo_final = id_nodo
@@ -425,8 +491,13 @@ class EscenaEsquematicoDC(QGraphicsScene):
                         cola.append(vecino)
             grupos.append(grupo_actual)
 
-        # Asignar id_nodo a cada grupo conexo (si contiene un componente TIERRA -> nodo 0)
-        siguiente_id_aislado = 50
+        # Cada grupo físico recibe un ID distinto. Los nombres temporales de
+        # terminales abiertos no deben heredarse al conectar el grupo.
+        reservados = {t.id_nodo for grupo in grupos if len(grupo) > 1 for t in grupo
+                      if t.id_nodo > 0 and t.etiqueta_nodo and
+                      not t.etiqueta_nodo.startswith("N_abierto_")}
+        usados = set()
+        siguiente_id = 1
         for grupo in grupos:
             tiene_tierra = any(
                 t.componente_padre.tipo_catalogo == "TIERRA" for t in grupo
@@ -435,26 +506,26 @@ class EscenaEsquematicoDC(QGraphicsScene):
                 id_asignado = 0
                 etiqueta_asignada = "GND"
             else:
-                # Conservar el id_nodo no nulo existente si el grupo proviene de un nodo válido
-                ids_existentes = [t.id_nodo for t in grupo if t.id_nodo > 0]
-                etiquetas_existentes = [
-                    t.etiqueta_nodo for t in grupo if t.etiqueta_nodo and t.etiqueta_nodo != "GND"
-                ]
-                if ids_existentes and len(grupo) > 1:
-                    id_asignado = ids_existentes[0]
-                    etiqueta_asignada = (
-                        etiquetas_existentes[0] if etiquetas_existentes else f"V{id_asignado}"
-                    )
+                candidatos = [t for t in grupo if t.id_nodo > 0 and t.id_nodo not in usados
+                              and t.etiqueta_nodo and t.etiqueta_nodo != "GND"
+                              and not t.etiqueta_nodo.startswith("N_abierto_")]
+                if len(grupo) > 1 and candidatos:
+                    id_asignado = candidatos[0].id_nodo
+                    etiqueta_asignada = candidatos[0].etiqueta_nodo
                 else:
-                    id_asignado = siguiente_id_aislado
-                    etiqueta_asignada = f"N_abierto_{siguiente_id_aislado}"
-                    siguiente_id_aislado += 1
+                    while siguiente_id in usados or siguiente_id in reservados:
+                        siguiente_id += 1
+                    id_asignado = siguiente_id
+                    siguiente_id += 1
+                    etiqueta_asignada = (f"V{id_asignado}" if len(grupo) > 1
+                                         else f"N_abierto_{id_asignado}")
+                usados.add(id_asignado)
 
             for t in grupo:
                 t.id_nodo = id_asignado
                 t.etiqueta_nodo = etiqueta_asignada
                 for c in t.cables_conectados:
-                    c.etiqueta_nodo = etiqueta_asignada
+                    c.establecer_etiqueta(etiqueta_asignada)
                     c.update()
 
     # -------------------------------------------------------------------------
@@ -530,6 +601,7 @@ class EscenaEsquematicoDC(QGraphicsScene):
             return
 
         pos_drop = event.scenePos()
+        self.antes_de_cambio.emit()
         nuevo_item = self.instanciar_componente_por_drop(tipo, pos_drop)
         if nuevo_item is not None:
             self.clearSelection()
@@ -595,6 +667,55 @@ class VistaEsquematicoDC(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setBackgroundBrush(QBrush(QColor("#FFFFFF")))
+        # El desplazamiento del lienzo se hace con la mano; mantiene el área limpia.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.centerOn(440, 180)
+        self._modo_mano = False
+        self._inicio_arrastre = None
+
+    def establecer_modo_mano(self, activo: bool) -> None:
+        self._modo_mano = activo
+        self.setDragMode(
+            QGraphicsView.DragMode.ScrollHandDrag if activo
+            else QGraphicsView.DragMode.RubberBandDrag
+        )
+        self.viewport().setCursor(
+            Qt.CursorShape.OpenHandCursor if activo else Qt.CursorShape.ArrowCursor
+        )
+
+    def mousePressEvent(self, event) -> None:
+        if self._modo_mano and event.button() == Qt.MouseButton.LeftButton:
+            self._inicio_arrastre = event.position().toPoint()
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._modo_mano and self._inicio_arrastre is not None:
+            posicion = event.position().toPoint()
+            desplazamiento = posicion - self._inicio_arrastre
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - desplazamiento.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - desplazamiento.y())
+            self._inicio_arrastre = posicion
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if self._modo_mano and self._inicio_arrastre is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._inicio_arrastre = None
+            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def establecer_zoom(self, porcentaje: int) -> None:
+        self.resetTransform()
+        escala = porcentaje / 100.0
+        self.scale(escala, escala)
 
 
 # =============================================================================
@@ -610,14 +731,20 @@ class VentanaSimuladorDC(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(
-            "Simulador de Circuitos DC — Análisis Nodal Modificado (MNA) y Drag & Drop (PySide6)"
-        )
+        self.setWindowTitle("Simulador de Circuitos DC — Fase 3")
+        self.setWindowIcon(QIcon(str(Path(__file__).resolve().parent.parent / "assets" / "icono_circuito.ico")))
         self.resize(1420, 920)
         self.setStyleSheet(ESTILO_QSS)
 
         self._id_actual: str = "R_5"
         self._items_arbol_por_id: Dict[str, QTreeWidgetItem] = {}
+        self._historial = []
+        self._registrar_historial = False
+        self._simulando = False
+        self._fase_animacion = 0.0
+        self._temporizador_animacion = QTimer(self)
+        self._temporizador_animacion.setInterval(50)
+        self._temporizador_animacion.timeout.connect(self._avanzar_animacion)
 
         self._construir_barra_menu()
         self._construir_barra_herramientas()
@@ -629,38 +756,35 @@ class VentanaSimuladorDC(QMainWindow):
 
         # Cargar el circuito de validación con CCVS en el lienzo interactivo
         self._cargar_circuito_validacion_ccvs()
+        self._registrar_historial = True
 
     def _construir_barra_menu(self) -> None:
         barra_menu: QMenuBar = self.menuBar()
         for nombre_menu in ("Archivo", "Editar", "Vista", "Análisis", "Ayuda"):
             menu = barra_menu.addMenu(nombre_menu)
-            if nombre_menu == "Editar":
+            if nombre_menu == "Archivo":
+                for texto, funcion in (("Nuevo", self._slot_limpiar_lienzo),
+                                       ("Abrir…", self._abrir_circuito),
+                                       ("Guardar como…", self._guardar_circuito)):
+                    accion = QAction(texto, self)
+                    accion.triggered.connect(funcion)
+                    menu.addAction(accion)
+            elif nombre_menu == "Editar":
+                deshacer = QAction("Deshacer", self)
+                deshacer.setShortcut(QKeySequence.StandardKey.Undo)
+                deshacer.triggered.connect(self._deshacer)
+                menu.addAction(deshacer)
                 accion_elim = QAction("Eliminar componente seleccionado (Supr)", self)
                 accion_elim.triggered.connect(self._slot_eliminar_componente_actual)
                 menu.addAction(accion_elim)
             else:
-                menu.addAction(QAction(f"Opciones de {nombre_menu}", self))
+                menu.setEnabled(False)
 
     def _construir_barra_herramientas(self) -> None:
         toolbar = QToolBar("Barra de Acciones Principal")
         toolbar.setObjectName("BarraSuperior")
         toolbar.setMovable(False)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
-
-        self.btn_nuevo = QPushButton("+ Nuevo")
-        self.btn_abrir = QPushButton("Abrir")
-        self.btn_guardar = QPushButton("Guardar")
-        for btn in (self.btn_nuevo, self.btn_abrir, self.btn_guardar):
-            btn.setProperty("class", "BotonToolbar")
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            toolbar.addWidget(btn)
-
-        self.btn_nuevo.clicked.connect(self._slot_limpiar_lienzo)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet("color: #E2E6E3; margin: 0 10px;")
-        toolbar.addWidget(sep)
 
         lbl_metodo = QLabel("Método de análisis")
         lbl_metodo.setStyleSheet("color: #6C757D; font-size: 12px; margin-right: 6px;")
@@ -680,6 +804,8 @@ class VentanaSimuladorDC(QMainWindow):
         self.btn_mallas = QPushButton("Mallas")
         self.btn_mallas.setCheckable(True)
         self.btn_mallas.setProperty("class", "BotonSegmento")
+        self.btn_mallas.setToolTip("Corrientes de lazos independientes, con supermallas para fuentes de corriente")
+        self.btn_mallas.toggled.connect(self._cambiar_metodo)
 
         grupo_metodo = QButtonGroup(self)
         grupo_metodo.setExclusive(True)
@@ -696,23 +822,24 @@ class VentanaSimuladorDC(QMainWindow):
         )
         toolbar.addWidget(espaciador)
 
-        # Botón en barra superior para eliminar el elemento seleccionado
-        self.btn_eliminar_toolbar = QPushButton("Eliminar seleccionado")
-        self.btn_eliminar_toolbar.setProperty("class", "BotonEliminar")
-        self.btn_eliminar_toolbar.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_eliminar_toolbar.clicked.connect(self._slot_eliminar_componente_actual)
-        toolbar.addWidget(self.btn_eliminar_toolbar)
+        self.btn_comparar = QPushButton("Comparar resultados")
+        self.btn_comparar.setProperty("class", "BotonToolbar")
+        self.btn_comparar.setEnabled(False)
+        self.btn_comparar.setToolTip("Comparar el circuito de fase 1 con Qucs-S/ngspice")
+        self.btn_comparar.clicked.connect(self._mostrar_comparacion)
+        self._accion_comparar = toolbar.addWidget(self.btn_comparar)
+        self._accion_comparar.setVisible(False)
 
         self.btn_restablecer = QPushButton("Restablecer")
         self.btn_restablecer.setProperty("class", "BotonToolbar")
         self.btn_restablecer.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_restablecer.clicked.connect(self._cargar_circuito_validacion_ccvs)
+        self.btn_restablecer.clicked.connect(self._restablecer_circuito)
         toolbar.addWidget(self.btn_restablecer)
 
-        self.btn_analizar = QPushButton("Analizar circuito")
+        self.btn_analizar = QPushButton("Iniciar simulación")
         self.btn_analizar.setObjectName("BotonAnalizar")
         self.btn_analizar.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_analizar.clicked.connect(self._slot_analizar_circuito)
+        self.btn_analizar.clicked.connect(self._alternar_simulacion)
         toolbar.addWidget(self.btn_analizar)
 
     def _construir_cuerpo_principal(self) -> None:
@@ -755,59 +882,91 @@ class VentanaSimuladorDC(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
+        seccion_circuito = QWidget()
+        seccion_circuito.setMinimumHeight(0)
+        seccion_circuito.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
+        layout_circuito = QVBoxLayout(seccion_circuito)
+        layout_circuito.setContentsMargins(0, 0, 0, 0)
+        layout_circuito.setSpacing(8)
         lbl_circuito = QLabel("CIRCUITO ABIERTO")
         lbl_circuito.setProperty("class", "TituloSeccion")
-        layout.addWidget(lbl_circuito)
+        layout_circuito.addWidget(lbl_circuito)
 
         self.arbol_circuito = QTreeWidget()
         self.arbol_circuito.setObjectName("ArbolCircuito")
         self.arbol_circuito.setHeaderHidden(True)
         self.arbol_circuito.setColumnCount(2)
+        self.arbol_circuito.setIndentation(14)
+        self.arbol_circuito.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.arbol_circuito.header().setStretchLastSection(False)
         self.arbol_circuito.header().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch
         )
         self.arbol_circuito.header().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents
+            1, QHeaderView.ResizeMode.Fixed
         )
+        self.arbol_circuito.header().resizeSection(1, 70)
         self.arbol_circuito.itemClicked.connect(self._slot_item_arbol_clic)
-        layout.addWidget(self.arbol_circuito, stretch=1)
+        layout_circuito.addWidget(self.arbol_circuito, stretch=1)
+        layout.addWidget(seccion_circuito, stretch=1)
 
         linea = QFrame()
         linea.setFrameShape(QFrame.Shape.HLine)
         linea.setStyleSheet("color: #EAECE9;")
         layout.addWidget(linea)
 
-        lbl_insertar = QLabel("INSERTAR COMPONENTE (DRAG & DROP)")
+        seccion_componentes = QWidget()
+        seccion_componentes.setMinimumHeight(0)
+        seccion_componentes.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
+        layout_componentes = QVBoxLayout(seccion_componentes)
+        layout_componentes.setContentsMargins(0, 0, 0, 0)
+        layout_componentes.setSpacing(8)
+        lbl_insertar = QLabel("COMPONENTES")
         lbl_insertar.setProperty("class", "TituloSeccion")
-        layout.addWidget(lbl_insertar)
+        layout_componentes.addWidget(lbl_insertar)
 
-        lbl_instruccion_dd = QLabel("Arrastra un componente hacia el lienzo:")
-        lbl_instruccion_dd.setStyleSheet("color: #6C757D; font-size: 11px;")
-        layout.addWidget(lbl_instruccion_dd)
+        self.scroll_componentes = QScrollArea()
+        self.scroll_componentes.setWidgetResizable(True)
+        self.scroll_componentes.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_componentes.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        contenido_paleta = QWidget()
+        layout_paleta = QVBoxLayout(contenido_paleta)
+        layout_paleta.setContentsMargins(0, 0, 2, 0)
+        layout_paleta.setSpacing(6)
+        self.scroll_componentes.setWidget(contenido_paleta)
+        layout_componentes.addWidget(self.scroll_componentes, stretch=1)
+        layout.addWidget(seccion_componentes, stretch=1)
 
-        definicion_paleta = [
-            ("∿  Resistencia\n     R · Ohmios (Ω)", "RESISTENCIA", True),
-            ("⊕  Fuente de voltaje\n     V · Independiente (V)", "FUENTE_VOLTAJE", False),
-            ("⊙  Fuente de corriente\n     I · Independiente (A)", "FUENTE_CORRIENTE", False),
-            ("◇  Fuente dependiente CCVS\n     V = r · i_φ (Controlada)", "FUENTE_CCVS", False),
-            ("⏚  Tierra\n     GND · Referencia 0 V", "TIERRA", False),
+        grupos = [
+            ("Fuentes independientes", [("⊕   Voltaje", "FUENTE_VOLTAJE"), ("⊙   Corriente", "FUENTE_CORRIENTE")]),
+            ("Resistivos", [("∿   Resistencia", "RESISTENCIA")]),
+            ("Fuentes controladas", [("◇   CCVS", "FUENTE_CCVS")]),
+            ("Referencia", [("⏚   Tierra", "TIERRA")]),
         ]
-
-        for texto_btn, tipo_cat, es_destacado in definicion_paleta:
-            btn_drag = BotonPaletaDrag(texto_btn, tipo_cat, self)
-            btn_drag.setProperty(
-                "class", "BotonInsertarActivo" if es_destacado else "BotonInsertar"
-            )
-            layout.addWidget(btn_drag)
-
-        lbl_tip_cable = QLabel(
-            "Tip: Arrastra entre pines para unir con cables. Usa clic derecho o 'Supr' para eliminar."
-        )
-        lbl_tip_cable.setWordWrap(True)
-        lbl_tip_cable.setStyleSheet(
-            "color: #6C757D; font-size: 11px; margin-top: 4px;"
-        )
-        layout.addWidget(lbl_tip_cable)
+        for nombre, componentes in grupos:
+            boton_grupo = QToolButton()
+            boton_grupo.setObjectName("Categoria")
+            boton_grupo.setText(nombre)
+            boton_grupo.setCheckable(True)
+            boton_grupo.setArrowType(Qt.ArrowType.RightArrow)
+            boton_grupo.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+            boton_grupo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            contenido = QWidget()
+            contenido.setStyleSheet("background-color: #f4faf8; border-radius: 6px;")
+            columna = QVBoxLayout(contenido)
+            columna.setContentsMargins(7, 6, 7, 6)
+            columna.setSpacing(6)
+            for texto, tipo in componentes:
+                boton = BotonPaletaDrag(texto, tipo, self)
+                boton.setProperty("class", "BotonInsertar")
+                boton.setMinimumHeight(36)
+                columna.addWidget(boton)
+            contenido.setVisible(False)
+            boton_grupo.toggled.connect(contenido.setVisible)
+            boton_grupo.toggled.connect(lambda abierto, b=boton_grupo: b.setArrowType(Qt.ArrowType.DownArrow if abierto else Qt.ArrowType.RightArrow))
+            layout_paleta.addWidget(boton_grupo)
+            layout_paleta.addWidget(contenido)
+        layout_paleta.addStretch()
 
         return panel
 
@@ -818,7 +977,11 @@ class VentanaSimuladorDC(QMainWindow):
         layout.setSpacing(10)
 
         self.splitter_central_vertical = QSplitter(Qt.Orientation.Vertical)
-        self.splitter_central_vertical.setHandleWidth(6)
+        self.splitter_central_vertical.setHandleWidth(4)
+        self.splitter_central_vertical.setStyleSheet(
+            "QSplitter::handle { background: #f5faf8; } "
+            "QSplitter::handle:hover { background: #b9d9cf; }"
+        )
 
         widget_espacio_trabajo = self._crear_seccion_espacio_trabajo()
         widget_resultados = self._crear_seccion_resultados()
@@ -836,27 +999,6 @@ class VentanaSimuladorDC(QMainWindow):
         layout.setContentsMargins(4, 0, 4, 4)
         layout.setSpacing(6)
 
-        fila_cabecera = QHBoxLayout()
-        col_titulos = QVBoxLayout()
-        col_titulos.setSpacing(2)
-
-        lbl_titulo = QLabel("espacio de trabajo (Drag & Drop interactivo)")
-        lbl_titulo.setStyleSheet("font-size: 16px; font-weight: 700; color: #212529;")
-        lbl_subtitulo = QLabel(
-            "Selecciona cualquier elemento para editar o eliminar (clic derecho, botón Eliminar o tecla Supr)."
-        )
-        lbl_subtitulo.setStyleSheet("font-size: 12px; color: #6C757D;")
-
-        col_titulos.addWidget(lbl_titulo)
-        col_titulos.addWidget(lbl_subtitulo)
-        fila_cabecera.addLayout(col_titulos)
-        fila_cabecera.addStretch()
-
-        self.lbl_badge_estado = QLabel("• Análisis completo")
-        self.lbl_badge_estado.setObjectName("BadgeEstado")
-        fila_cabecera.addWidget(self.lbl_badge_estado)
-        layout.addLayout(fila_cabecera)
-
         marco_canvas = QFrame()
         marco_canvas.setProperty("class", "PanelBlanco")
         layout_canvas = QVBoxLayout(marco_canvas)
@@ -864,6 +1006,29 @@ class VentanaSimuladorDC(QMainWindow):
         layout_canvas.setSpacing(0)
 
         fila_info_sup = QHBoxLayout()
+        fila_info_sup.setSpacing(10)
+        self.btn_modo_seleccion = QPushButton("↖  Seleccionar")
+        self.btn_modo_mano = QPushButton("✋  Mano")
+        self.btn_modo_seleccion.setToolTip("Seleccionar, mover componentes y conectar terminales")
+        self.btn_modo_mano.setToolTip("Arrastrar para desplazar el lienzo")
+        grupo_modos = QButtonGroup(self)
+        grupo_modos.setExclusive(True)
+        for boton in (self.btn_modo_seleccion, self.btn_modo_mano):
+            boton.setCheckable(True)
+            grupo_modos.addButton(boton)
+            fila_info_sup.addWidget(boton)
+        self.btn_modo_seleccion.setChecked(True)
+        fila_info_sup.addSpacing(12)
+        fila_info_sup.addWidget(QLabel("Zoom"))
+        self.slider_zoom = QSlider(Qt.Orientation.Horizontal)
+        self.slider_zoom.setRange(25, 200)
+        self.slider_zoom.setValue(100)
+        self.slider_zoom.setFixedWidth(120)
+        self.slider_zoom.setToolTip("Ajustar zoom del circuito")
+        fila_info_sup.addWidget(self.slider_zoom)
+        self.lbl_zoom = QLabel("100 %")
+        self.lbl_zoom.setMinimumWidth(45)
+        fila_info_sup.addWidget(self.lbl_zoom)
         fila_info_sup.addStretch()
         self.lbl_conteo_topologia = QLabel("4 nodos activos · 7 componentes")
         self.lbl_conteo_topologia.setStyleSheet("color: #868E96; font-size: 11px;")
@@ -871,7 +1036,9 @@ class VentanaSimuladorDC(QMainWindow):
         layout_canvas.addLayout(fila_info_sup)
 
         self.escena_circuito = EscenaEsquematicoDC(self)
+        self.escena_circuito.antes_de_cambio.connect(self._guardar_punto_deshacer)
         self.escena_circuito.componente_seleccionado.connect(self._sincronizar_seleccion)
+        self.escena_circuito.componente_doble_clic.connect(self._editar_componente)
         self.escena_circuito.componente_soltado.connect(
             self._slot_componente_soltado_en_escena
         )
@@ -881,6 +1048,14 @@ class VentanaSimuladorDC(QMainWindow):
         )
 
         self.vista_circuito = VistaEsquematicoDC(self.escena_circuito, self)
+        self.btn_modo_seleccion.clicked.connect(
+            lambda: self.vista_circuito.establecer_modo_mano(False)
+        )
+        self.btn_modo_mano.clicked.connect(
+            lambda: self.vista_circuito.establecer_modo_mano(True)
+        )
+        self.slider_zoom.valueChanged.connect(self.vista_circuito.establecer_zoom)
+        self.slider_zoom.valueChanged.connect(lambda valor: self.lbl_zoom.setText(f"{valor} %"))
         layout_canvas.addWidget(self.vista_circuito, stretch=1)
 
         layout.addWidget(marco_canvas, stretch=1)
@@ -896,64 +1071,35 @@ class VentanaSimuladorDC(QMainWindow):
         fila_top = QHBoxLayout()
         lbl_res = QLabel("Resultados")
         lbl_res.setStyleSheet("font-size: 15px; font-weight: 700; color: #212529;")
-        lbl_sub_metodo = QLabel("Análisis Nodal Modificado (MNA con CCVS)")
-        lbl_sub_metodo.setStyleSheet(
-            "font-size: 12px; color: #6C757D; margin-left: 10px;"
-        )
-
+        self.lbl_estado_resultados = QLabel("Ejecuta la simulación para ver resultados")
+        self.lbl_estado_resultados.setStyleSheet("color: #59756d; font-size: 12px;")
         fila_top.addWidget(lbl_res)
-        fila_top.addWidget(lbl_sub_metodo)
         fila_top.addStretch()
+        fila_top.addWidget(self.lbl_estado_resultados)
         layout.addLayout(fila_top)
 
         fila_metricas_tabla = QHBoxLayout()
         fila_metricas_tabla.setSpacing(16)
 
         col_voltajes = QVBoxLayout()
-        col_voltajes.setSpacing(8)
-
-        lbl_vnodo = QLabel("VOLTAJES DE NODO Y CORRIENTE DE CONTROL")
-        lbl_vnodo.setProperty("class", "TituloSeccion")
-        col_voltajes.addWidget(lbl_vnodo)
-
-        fila_tarjetas_v = QHBoxLayout()
-        fila_tarjetas_v.setSpacing(8)
-
-        self.lbl_val_v1 = QLabel("16,00")
-        self.lbl_val_v2 = QLabel("10,00")
-        self.lbl_val_v3 = QLabel("9,60")
-
-        fila_tarjetas_v.addWidget(
-            self._crear_tarjeta_voltaje_nodo("Nodo V1", self.lbl_val_v1, "V")
-        )
-        fila_tarjetas_v.addWidget(
-            self._crear_tarjeta_voltaje_nodo("Nodo V2", self.lbl_val_v2, "V")
-        )
-        fila_tarjetas_v.addWidget(
-            self._crear_tarjeta_voltaje_nodo("Nodo V3", self.lbl_val_v3, "V")
-        )
-        col_voltajes.addLayout(fila_tarjetas_v)
-
-        tarjeta_destacada = QFrame()
-        tarjeta_destacada.setObjectName("TarjetaCorrienteTotal")
-        layout_dest = QHBoxLayout(tarjeta_destacada)
-        layout_dest.setContentsMargins(12, 8, 14, 8)
-        self.lbl_resumen_iphi = QLabel(
-            "i_φ (V1→V2) = 1,20 A  |  Potencia en R_5 (5 Ω):"
-        )
-        self.lbl_resumen_iphi.setStyleSheet(
-            "color: #2C332E; font-size: 12px; font-weight: 600;"
-        )
-        self.lbl_potencia_5ohm = QLabel("7,200 W")
-        self.lbl_potencia_5ohm.setStyleSheet(
-            "color: #1E3A28; font-size: 19px; font-weight: 700;"
-        )
-        layout_dest.addWidget(self.lbl_resumen_iphi)
-        layout_dest.addStretch()
-        layout_dest.addWidget(self.lbl_potencia_5ohm)
-        col_voltajes.addWidget(tarjeta_destacada)
-
-        fila_metricas_tabla.addLayout(col_voltajes, stretch=4)
+        col_voltajes.setSpacing(6)
+        titulo_nodos = QLabel("Voltajes por nodo")
+        titulo_nodos.setProperty("class", "TituloSeccion")
+        col_voltajes.addWidget(titulo_nodos)
+        self.tabla_nodos = QTableWidget(0, 2)
+        self.tabla_nodos.setObjectName("TablaLecturas")
+        self.tabla_nodos.setHorizontalHeaderLabels(["Nodo", "Voltaje"])
+        self.tabla_nodos.verticalHeader().setVisible(False)
+        self.tabla_nodos.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tabla_nodos.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.tabla_nodos.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tabla_nodos.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.tabla_nodos.setMouseTracking(True)
+        self.tabla_nodos.cellClicked.connect(self._seleccionar_nodo_resultado)
+        self.tabla_nodos.setShowGrid(False)
+        self.tabla_nodos.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        col_voltajes.addWidget(self.tabla_nodos)
+        fila_metricas_tabla.addLayout(col_voltajes, stretch=2)
 
         col_tabla = QVBoxLayout()
         col_tabla.setSpacing(6)
@@ -978,45 +1124,140 @@ class VentanaSimuladorDC(QMainWindow):
             QTableWidget.SelectionMode.SingleSelection
         )
         self.tabla_lecturas.setShowGrid(False)
+        self.tabla_lecturas.setMouseTracking(True)
         self.tabla_lecturas.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
         self.tabla_lecturas.cellClicked.connect(self._slot_fila_tabla_clic)
 
         col_tabla.addWidget(self.tabla_lecturas)
-        fila_metricas_tabla.addLayout(col_tabla, stretch=5)
-        layout.addLayout(fila_metricas_tabla)
-
-        fila_inferior = QHBoxLayout()
-        fila_inferior.setSpacing(14)
+        fila_metricas_tabla.addLayout(col_tabla, stretch=3)
+        panel_detalles = QWidget()
+        panel_detalles.setLayout(fila_metricas_tabla)
+        self.tabla_variables = QTableWidget(0, 3)
+        self.tabla_variables.setObjectName("TablaLecturas")
+        self.tabla_variables.setHorizontalHeaderLabels(["Variable", "Valor", "Unidad"])
+        self.tabla_variables.verticalHeader().setVisible(False)
+        self.tabla_variables.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tabla_variables.setShowGrid(False)
+        self.tabla_variables.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tabla_variables.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.tabla_variables.setMouseTracking(True)
+        self.tabla_variables.cellClicked.connect(self._seleccionar_variable_resultado)
+        self.tabla_variables.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.pestanas_resultados = QTabWidget()
+        self.pestanas_resultados.addTab(self.tabla_variables, "Punto de operación")
+        self.pestanas_resultados.addTab(panel_detalles, "Detalle por elemento")
+        layout.addWidget(self.pestanas_resultados, stretch=2)
 
         self.caja_ecuaciones = QTextEdit()
         self.caja_ecuaciones.setReadOnly(True)
+        self.caja_ecuaciones.setPlaceholderText("Sin resultados todavía")
         self.caja_ecuaciones.setFrameShape(QFrame.Shape.NoFrame)
 
-        self.caja_matriz = QTextEdit()
-        self.caja_matriz.setReadOnly(True)
-        self.caja_matriz.setFrameShape(QFrame.Shape.NoFrame)
+        panel_matriz = QWidget()
+        layout_matriz = QVBoxLayout(panel_matriz)
+        layout_matriz.setContentsMargins(12, 10, 12, 12)
+        layout_matriz.setSpacing(8)
+        titulo_matriz = QLabel("Sistema de ecuaciones   A · x = b")
+        titulo_matriz.setStyleSheet("font-size: 15px; font-weight: 700; color: #173f37;")
+        layout_matriz.addWidget(titulo_matriz)
+        self.lbl_estado_matriz = QLabel("Inicia la simulación para visualizar la matriz y los vectores.")
+        self.lbl_estado_matriz.setStyleSheet("color: #59756d; font-size: 12px;")
+        layout_matriz.addWidget(self.lbl_estado_matriz)
+        fila_matriz = QHBoxLayout()
+        fila_matriz.setSpacing(12)
+        self.tabla_matriz_a = self._crear_tabla_matriz()
+        self.tabla_matriz_a.horizontalHeader().setStretchLastSection(False)
+        self.tabla_matriz_a.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.tabla_vector_x = self._crear_tabla_matriz()
+        self.tabla_vector_b = self._crear_tabla_matriz()
+        self.tabla_vector_x.verticalHeader().setVisible(False)
+        self.tabla_vector_b.verticalHeader().setVisible(False)
+        for titulo, tabla, proporcion in (("A · Coeficientes", self.tabla_matriz_a, 6),
+                                         ("x · Solución", self.tabla_vector_x, 3),
+                                         ("b · Términos", self.tabla_vector_b, 2)):
+            columna = QVBoxLayout()
+            encabezado = QLabel(titulo)
+            encabezado.setStyleSheet("font-weight: 700; color: #315c52;")
+            columna.addWidget(encabezado)
+            columna.addWidget(tabla)
+            fila_matriz.addLayout(columna, proporcion)
+        layout_matriz.addLayout(fila_matriz, 1)
+        for tabla in (self.tabla_vector_x, self.tabla_vector_b):
+            self.tabla_matriz_a.verticalScrollBar().valueChanged.connect(tabla.verticalScrollBar().setValue)
+            tabla.verticalScrollBar().valueChanged.connect(self.tabla_matriz_a.verticalScrollBar().setValue)
 
-        fila_inferior.addWidget(
+        self.pestanas_resultados.addTab(
             self._envolver_en_tarjeta(
-                "Ecuaciones (SymPy MNA)",
-                "Método de Nodos Modificado · GND = 0 V",
+                "Ecuaciones del sistema (SymPy)",
+                "Sistema generado por el método seleccionado",
                 self.caja_ecuaciones,
             ),
-            stretch=1,
+            "Ecuaciones",
         )
-        fila_inferior.addWidget(
-            self._envolver_en_tarjeta(
-                "Matriz del sistema (NumPy)",
-                "A · x = b",
-                self.caja_matriz,
-            ),
-            stretch=1,
-        )
-        layout.addLayout(fila_inferior, stretch=1)
+        self.pestanas_resultados.addTab(panel_matriz, "Matriz del sistema")
 
         return panel_res
+
+    @staticmethod
+    def _celda_centrada(texto: str) -> QTableWidgetItem:
+        celda = QTableWidgetItem(texto)
+        celda.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        celda.setToolTip(texto)
+        return celda
+
+    @staticmethod
+    def _crear_tabla_matriz() -> QTableWidget:
+        tabla = QTableWidget()
+        tabla.setObjectName("TablaLecturas")
+        tabla.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tabla.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        tabla.setAlternatingRowColors(True)
+        tabla.setStyleSheet(
+            "QTableWidget { background: #ffffff; alternate-background-color: #f3faf7; gridline-color: #dcebe5; color: #173f37; border: 1px solid #dcebe5; border-radius: 5px; }"
+            "QHeaderView { background: #f5faf8; }"
+            "QHeaderView::section { background: #f5faf8; color: #45665e; border: none; padding: 5px; }"
+            "QTableCornerButton::section { background: #f5faf8; border: none; }"
+        )
+        tabla.verticalHeader().setDefaultSectionSize(32)
+        tabla.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        tabla.horizontalHeader().setStretchLastSection(True)
+        return tabla
+
+    def _limpiar_matriz(self) -> None:
+        for tabla in (self.tabla_matriz_a, self.tabla_vector_x, self.tabla_vector_b):
+            tabla.clear()
+            tabla.setRowCount(0)
+            tabla.setColumnCount(0)
+        self.lbl_estado_matriz.setText("Inicia la simulación para visualizar la matriz y los vectores.")
+
+    def _mostrar_matriz(self, sistema, solucion) -> None:
+        etiquetas = sistema.etiquetas_incognitas
+        cantidad = len(etiquetas)
+        for tabla, columnas in ((self.tabla_matriz_a, cantidad), (self.tabla_vector_x, 2), (self.tabla_vector_b, 1)):
+            tabla.clear()
+            tabla.setRowCount(cantidad)
+            tabla.setColumnCount(columnas)
+        self.tabla_matriz_a.setHorizontalHeaderLabels(etiquetas)
+        self.tabla_matriz_a.setVerticalHeaderLabels([f"E{i + 1}" for i in range(cantidad)])
+        self.tabla_vector_x.setHorizontalHeaderLabels(["Incógnita", "Valor"])
+        self.tabla_vector_b.setHorizontalHeaderLabels(["Valor"])
+        def numero(valor):
+            return f"{float(valor):.6g}".replace(".", ",")
+        def agregar(tabla, fila, columna, valor):
+            celda = self._celda_centrada(numero(valor))
+            celda.setToolTip(f"Valor completo: {float(valor):.15g}")
+            if float(valor) == 0:
+                celda.setForeground(QBrush(QColor("#8aa39b")))
+            tabla.setItem(fila, columna, celda)
+        for fila in range(cantidad):
+            for columna in range(cantidad):
+                agregar(self.tabla_matriz_a, fila, columna, sistema.matriz_A[fila, columna])
+            self.tabla_vector_x.setItem(fila, 0, self._celda_centrada(etiquetas[fila]))
+            agregar(self.tabla_vector_x, fila, 1, solucion.vector_x[fila])
+            agregar(self.tabla_vector_b, fila, 0, sistema.vector_b[fila])
+        self.lbl_estado_matriz.setText("Las filas E1, E2… son ecuaciones; las columnas de A y las filas de x siguen el orden de las incógnitas.")
 
     def _crear_tarjeta_voltaje_nodo(
         self, subtitulo: str, lbl_valor: QLabel, unidad: str
@@ -1147,7 +1388,7 @@ class VentanaSimuladorDC(QMainWindow):
         layout.addLayout(grid_term)
 
         self.chk_ref_n0 = QCheckBox("Referencia GND (0 V) definida")
-        self.chk_ref_n0.setChecked(True)
+        self.chk_ref_n0.setEnabled(False)
         self.chk_ref_n0.setStyleSheet(
             "color: #495057; font-size: 12px; margin-top: 4px;"
         )
@@ -1163,19 +1404,19 @@ class VentanaSimuladorDC(QMainWindow):
 
         self.lbl_titulo_voltaje_prop = QLabel("Voltaje V1 - V2")
         self.lbl_titulo_voltaje_prop.setStyleSheet("color: #6C757D; font-size: 12px;")
-        self.lbl_valor_voltaje_prop = QLabel("6,000 V")
+        self.lbl_valor_voltaje_prop = QLabel("—")
         self.lbl_valor_voltaje_prop.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.lbl_valor_voltaje_prop.setStyleSheet("font-weight: 700; color: #212529;")
 
         self.lbl_titulo_corriente_prop = QLabel("Corriente V1 → V2")
         self.lbl_titulo_corriente_prop.setStyleSheet("color: #6C757D; font-size: 12px;")
-        self.lbl_valor_corriente_prop = QLabel("1,200 A")
+        self.lbl_valor_corriente_prop = QLabel("—")
         self.lbl_valor_corriente_prop.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.lbl_valor_corriente_prop.setStyleSheet("font-weight: 700; color: #212529;")
 
         lbl_tit_pot = QLabel("Potencia calculada")
         lbl_tit_pot.setStyleSheet("color: #6C757D; font-size: 12px;")
-        self.lbl_valor_potencia_prop = QLabel("7,200 W")
+        self.lbl_valor_potencia_prop = QLabel("—")
         self.lbl_valor_potencia_prop.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.lbl_valor_potencia_prop.setStyleSheet("font-weight: 700; color: #1E3A28;")
 
@@ -1195,9 +1436,12 @@ class VentanaSimuladorDC(QMainWindow):
     # =========================================================================
 
     def _cargar_circuito_validacion_ccvs(self) -> None:
+        self._guardar_punto_deshacer()
+        self.escena_circuito.blockSignals(True)
         self.escena_circuito.clear()
         self.escena_circuito.componentes_graficos.clear()
         self.escena_circuito.cables_graficos.clear()
+        self.escena_circuito.blockSignals(False)
 
         vs = ComponenteGraficoItem(
             "Vs", "FUENTE_VOLTAJE", "20", "V", QPointF(95, 200), "V", 4, 0, "N_Vs", "GND"
@@ -1237,6 +1481,7 @@ class VentanaSimuladorDC(QMainWindow):
         for item in (vs, r_2a, r_20, r_5, r_10, r_2b, ccvs1, gnd_item):
             self.escena_circuito.registrar_componente_grafico(item)
 
+        self.escena_circuito.blockSignals(True)
         self.escena_circuito.conectar_terminales_con_cable(
             vs.terminal_a, r_2a.terminal_a, 4, "N_Vs"
         )
@@ -1268,24 +1513,320 @@ class VentanaSimuladorDC(QMainWindow):
         self.escena_circuito.conectar_terminales_con_cable(
             r_20.terminal_b, gnd_item.terminal_a, 0, "GND"
         )
+        self.escena_circuito.blockSignals(False)
 
         self._reconstruir_arbol_lateral()
-        self._slot_analizar_circuito()
+        self._limpiar_resultados()
         self._sincronizar_seleccion("R_5")
 
     # =========================================================================
     # GESTIÓN DE ELIMINACIÓN DE COMPONENTES Y VENTANAS DE ERROR
     # =========================================================================
 
-    def _actualizar_badge_estado(self, texto: str, es_error: bool = False) -> None:
-        self.lbl_badge_estado.setText(texto)
-        if es_error:
-            self.lbl_badge_estado.setStyleSheet(
-                "background-color: #F8D7DA; color: #842029; border: 1px solid #F5C2C7; "
-                "border-radius: 11px; padding: 3px 12px; font-size: 11px; font-weight: 700;"
-            )
+    def _detener_animacion(self) -> None:
+        self._temporizador_animacion.stop()
+        if hasattr(self, "_dialogo_estado"):
+            self._dialogo_estado.close()
+        self._simulando = False
+        self._comparacion_actual = None
+        if hasattr(self, "btn_comparar"):
+            self.btn_comparar.setEnabled(False)
+            self._accion_comparar.setVisible(False)
+        if hasattr(self, "_dialogo_comparacion"):
+            self._dialogo_comparacion.close()
+        if hasattr(self, "btn_analizar"):
+            self.btn_analizar.setText("Iniciar simulación")
+        self._corrientes_calculadas = {}
+        if hasattr(self, "escena_circuito"):
+            for cable in self.escena_circuito.cables_graficos:
+                cable.establecer_voltaje(None)
+                cable.resaltado_nodo = False
+                cable.update()
+            for item in self.escena_circuito.componentes_graficos.values():
+                item.corriente_animacion = 0.0
+                item.update()
+
+    def _restablecer_circuito(self) -> None:
+        self._guardar_punto_deshacer()
+        anterior = self._registrar_historial
+        self._registrar_historial = False
+        try:
+            self._detener_animacion()
+            self._cargar_circuito_validacion_ccvs()
+        finally:
+            self.escena_circuito.blockSignals(False)
+            self._registrar_historial = anterior
+
+    def _alternar_simulacion(self) -> None:
+        if self._simulando:
+            self._detener_animacion()
+            self._limpiar_resultados()
+            self.statusBar().showMessage("Simulación detenida", 4000)
+            return
+        self._slot_analizar_circuito()
+        if self._analisis_exitoso:
+            self._simulando = True
+            self.btn_analizar.setText("Detener simulación")
+            self.btn_comparar.setEnabled(True)
+            self._accion_comparar.setVisible(True)
+            self._alternar_animacion(True)
+            self.statusBar().showMessage("Simulación activa: las flechas indican la dirección de corriente", 5000)
+            self._mostrar_estado_simulacion(True, "El punto de operación DC se calculó correctamente. Consulta las variables y los detalles en Resultados.")
+
+    def _cambiar_metodo(self, activo: bool) -> None:
+        if hasattr(self, "tabla_nodos"):
+            metodo = "mallas" if activo else "nodos"
+            self._actualizar_badge_estado(f"Método de {metodo} seleccionado. Inicia la simulación.")
+
+    def _mostrar_comparacion(self) -> None:
+        if not self._simulando:
+            return
+        if self._comparacion_actual is None:
+            QMessageBox.information(self, "Comparar resultados", "La referencia de Qucs-S corresponde al circuito de fase 1. El circuito actual tiene otra topología o configuración de control y no se puede comparar automáticamente.")
+            return
+        filas, modificados = self._comparacion_actual
+        dialogo = QDialog(self)
+        dialogo.setWindowTitle("Comparar resultados — Qucs-S/ngspice (Fase 1)")
+        dialogo.resize(780, 360)
+        layout = QVBoxLayout(dialogo)
+        aviso = QLabel("Referencia: Qucs-S/ngspice (Fase 1) · Error = |simulado − referencia| / |referencia| × 100")
+        aviso.setWordWrap(True)
+        layout.addWidget(aviso)
+        if modificados:
+            advertencia = QLabel("Los valores o el sentido de control difieren de la configuración de fase 1; los porcentajes comparan circuitos con parámetros distintos.")
+            advertencia.setWordWrap(True)
+            advertencia.setStyleSheet("color: #9a5c10; font-weight: 600;")
+            layout.addWidget(advertencia)
+        tabla = QTableWidget(len(filas), 4)
+        tabla.setObjectName("TablaLecturas")
+        tabla.setHorizontalHeaderLabels(["Magnitud", "Qucs-S/ngspice", "Simulador", "Error"])
+        tabla.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        tabla.verticalHeader().setVisible(False)
+        tabla.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        tabla.setShowGrid(False)
+        for fila, (nombre, referencia, obtenido, unidad) in enumerate(filas):
+            error = abs(obtenido - referencia) / abs(referencia) * 100 if referencia else None
+            # Se evita mostrar ruido de coma flotante como un error significativo.
+            if error is not None and error < 1e-10:
+                error = 0.0
+            valores = (nombre, f"{referencia:.6g} {unidad}", f"{obtenido:.6g} {unidad}",
+                       f"{error:.4f} %" if error is not None else "No definido")
+            for columna, valor in enumerate(valores):
+                tabla.setItem(fila, columna, self._celda_centrada(valor.replace('.', ',')))
+        layout.addWidget(tabla)
+        cerrar = QPushButton("Cerrar")
+        cerrar.clicked.connect(dialogo.close)
+        layout.addWidget(cerrar, alignment=Qt.AlignmentFlag.AlignRight)
+        self._dialogo_comparacion = dialogo
+        dialogo.show()
+
+    def _estado_circuito(self) -> dict:
+        componentes = []
+        for item in self.escena_circuito.componentes_graficos.values():
+            componentes.append({"id": item.id_ref, "tipo": item.tipo_catalogo,
+                "valor": item.valor_str, "unidad": item.unidad_simbolo, "factor": item.factor_unidad,
+                "x": item.pos().x(), "y": item.pos().y(), "orientacion": item.orientacion,
+                "control": item.componente_control_ref,
+                "nodo_a": item.terminal_a.id_nodo, "nodo_b": item.terminal_b.id_nodo,
+                "etiqueta_a": item.terminal_a.etiqueta_nodo, "etiqueta_b": item.terminal_b.etiqueta_nodo})
+        cables = [{"origen": c.terminal_origen.componente_padre.id_ref,
+                   "pin_origen": c.terminal_origen.nombre_terminal,
+                   "destino": c.terminal_destino.componente_padre.id_ref,
+                   "pin_destino": c.terminal_destino.nombre_terminal}
+                  for c in self.escena_circuito.cables_graficos]
+        return {"version": 1, "componentes": componentes, "cables": cables}
+
+    def _guardar_punto_deshacer(self) -> None:
+        if self._registrar_historial and hasattr(self, "escena_circuito"):
+            estado = self._estado_circuito()
+            if not self._historial or self._historial[-1] != estado:
+                self._historial.append(estado)
+                self._historial = self._historial[-50:]
+
+    def _deshacer(self) -> None:
+        actual = self._estado_circuito()
+        while self._historial and self._historial[-1] == actual:
+            self._historial.pop()
+        if self._historial:
+            estado = self._historial.pop()
+            self._restaurar_estado(estado)
+            self.statusBar().showMessage("Cambio deshecho", 4000)
+
+    def _guardar_circuito(self) -> None:
+        ruta, _ = QFileDialog.getSaveFileName(self, "Guardar circuito", "circuito.json", "Circuito JSON (*.json)")
+        if not ruta:
+            return
+        try:
+            with open(ruta, "w", encoding="utf-8") as archivo:
+                json.dump(self._estado_circuito(), archivo, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            QMessageBox.warning(self, "No se pudo guardar", str(exc))
+
+    def _abrir_circuito(self) -> None:
+        ruta, _ = QFileDialog.getOpenFileName(self, "Abrir circuito", "", "Circuitos (*.json *.asc);;Circuito JSON (*.json);;LTspice (*.asc)")
+        if not ruta:
+            return
+        try:
+            if Path(ruta).suffix.lower() == ".asc":
+                datos = importar_asc(ruta)
+            else:
+                with open(ruta, encoding="utf-8") as archivo:
+                    datos = json.load(archivo)
+            self._restaurar_estado(datos, guardar=True)
+            if Path(ruta).suffix.lower() == ".asc":
+                self.statusBar().showMessage("Esquema LTspice importado; las conexiones se redibujaron. Guarda como JSON para editarlo.", 10000)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            QMessageBox.warning(self, "No se pudo abrir", str(exc))
+
+    def _restaurar_estado(self, datos: dict, guardar: bool = False) -> None:
+        if datos["version"] != 1 or not isinstance(datos["componentes"], list) or not isinstance(datos["cables"], list):
+            raise ValueError("Formato de circuito no compatible")
+        nuevos = {}
+        for d in datos["componentes"]:
+            if d["tipo"] not in ("RESISTENCIA", "FUENTE_VOLTAJE", "FUENTE_CORRIENTE", "FUENTE_CCVS", "TIERRA") or not d["id"] or d["id"] in nuevos:
+                raise ValueError("Componente inválido o etiqueta repetida")
+            if not all(math.isfinite(float(v)) for v in (d["valor"], d["x"], d["y"], d["factor"])) or float(d["factor"]) <= 0 or d["orientacion"] not in ("H", "V"):
+                raise ValueError("Propiedades inválidas")
+            item = ComponenteGraficoItem(d["id"], d["tipo"], d["valor"], d["unidad"], QPointF(d["x"], d["y"]), d["orientacion"], d["nodo_a"], d["nodo_b"], d["etiqueta_a"], d["etiqueta_b"], d["control"])
+            item.factor_unidad = float(d["factor"])
+            nuevos[item.id_ref] = item
+        for c in datos["cables"]:
+            if c["origen"] not in nuevos or c["destino"] not in nuevos or c["pin_origen"] not in ("A", "B") or c["pin_destino"] not in ("A", "B"):
+                raise ValueError("Conexión inválida")
+        if guardar:
+            self._guardar_punto_deshacer()
+        anterior = self._registrar_historial
+        self._registrar_historial = False
+        try:
+            self._slot_limpiar_lienzo()
+            for item in nuevos.values():
+                self.escena_circuito.registrar_componente_grafico(item)
+            self.escena_circuito.blockSignals(True)
+            for c in datos["cables"]:
+                a = getattr(nuevos[c["origen"]], "terminal_" + c["pin_origen"].lower())
+                b = getattr(nuevos[c["destino"]], "terminal_" + c["pin_destino"].lower())
+                self.escena_circuito.conectar_terminales_con_cable(a, b)
+            self.escena_circuito.blockSignals(False)
+            self.escena_circuito.recalcular_nodos_desde_cables()
+            self._reconstruir_arbol_lateral()
+            if nuevos:
+                self._sincronizar_seleccion(next(iter(nuevos)))
+        finally:
+            self.escena_circuito.blockSignals(False)
+            self._registrar_historial = anterior
+
+    def _alternar_animacion(self, activa: bool) -> None:
+        if activa and hasattr(self, "_corrientes_calculadas") and self._corrientes_calculadas:
+            for nombre, corriente in self._corrientes_calculadas.items():
+                item = self.escena_circuito.componentes_graficos.get(nombre)
+                if item:
+                    item.corriente_animacion = corriente
+            self._temporizador_animacion.start()
         else:
-            self.lbl_badge_estado.setStyleSheet("")
+            self._temporizador_animacion.stop()
+            if hasattr(self, "escena_circuito"):
+                for item in self.escena_circuito.componentes_graficos.values():
+                    item.corriente_animacion = 0.0
+                    item.update()
+
+    def _avanzar_animacion(self) -> None:
+        self._fase_animacion = (self._fase_animacion + 0.015) % 1.0
+        for item in self.escena_circuito.componentes_graficos.values():
+            if item.corriente_animacion:
+                item.fase_animacion = self._fase_animacion
+                item.update()
+
+    def _editar_componente(self, nombre: str) -> None:
+        item = self.escena_circuito.componentes_graficos.get(nombre)
+        if not item or item.tipo_catalogo == "TIERRA":
+            return
+        dialogo = QDialog(self)
+        dialogo.setWindowTitle("Editar componente")
+        formulario = QFormLayout(dialogo)
+        etiqueta = QLineEdit(item.id_ref)
+        valor = QLineEdit(f"{float(item.valor_str) / item.factor_unidad:g}")
+        unidad = QComboBox()
+        unidades = {
+            "RESISTENCIA": [("Ω", 1), ("kΩ", 1e3), ("MΩ", 1e6)],
+            "FUENTE_VOLTAJE": [("V", 1), ("mV", 1e-3), ("kV", 1e3)],
+            "FUENTE_CORRIENTE": [("A", 1), ("mA", 1e-3), ("µA", 1e-6)],
+            "FUENTE_CCVS": [("Ω", 1), ("kΩ", 1e3), ("MΩ", 1e6)],
+        }
+        for texto, factor in unidades[item.tipo_catalogo]:
+            unidad.addItem(texto, factor)
+        indice = unidad.findData(item.factor_unidad)
+        unidad.setCurrentIndex(max(indice, 0))
+        formulario.addRow("Etiqueta", etiqueta)
+        formulario.addRow("Valor", valor)
+        formulario.addRow("Unidad", unidad)
+        control = None
+        if item.tipo_catalogo == "FUENTE_CCVS":
+            control = QComboBox()
+            for otro in self.escena_circuito.componentes_graficos.values():
+                if otro.tipo_catalogo in ("RESISTENCIA", "FUENTE_VOLTAJE", "FUENTE_CORRIENTE", "FUENTE_CCVS") and otro is not item:
+                    control.addItem(otro.id_ref)
+            control.setCurrentText(item.componente_control_ref)
+            formulario.addRow("Corriente de control", control)
+        botones = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        botones.button(QDialogButtonBox.StandardButton.Save).setText("Guardar")
+        botones.button(QDialogButtonBox.StandardButton.Cancel).setText("Cancelar")
+        botones.accepted.connect(dialogo.accept)
+        botones.rejected.connect(dialogo.reject)
+        formulario.addRow(botones)
+        while dialogo.exec() == QDialog.DialogCode.Accepted:
+            nuevo = etiqueta.text().strip()
+            try:
+                numero = float(valor.text().strip().replace(",", "."))
+                if not nuevo or (nuevo != nombre and nuevo in self.escena_circuito.componentes_graficos):
+                    raise ValueError("La etiqueta debe ser única y no puede estar vacía.")
+                if not math.isfinite(numero) or (item.tipo_catalogo == "RESISTENCIA" and numero <= 0):
+                    raise ValueError("Introduce un valor finito; la resistencia debe ser mayor que cero.")
+                if control is not None and not control.currentText():
+                    raise ValueError("Selecciona un componente de control.")
+            except ValueError as exc:
+                QMessageBox.warning(dialogo, "Datos inválidos", str(exc))
+                continue
+            self._guardar_punto_deshacer()
+            item.prepareGeometryChange()
+            if nuevo != nombre:
+                del self.escena_circuito.componentes_graficos[nombre]
+                item.id_ref = nuevo
+                self.escena_circuito.componentes_graficos[nuevo] = item
+                for otro in self.escena_circuito.componentes_graficos.values():
+                    if otro.componente_control_ref == nombre:
+                        otro.componente_control_ref = nuevo
+            item.factor_unidad = float(unidad.currentData())
+            item.unidad_simbolo = unidad.currentText()
+            item.valor_str = str(numero * item.factor_unidad)
+            if control is not None:
+                item.componente_control_ref = control.currentText()
+            item.update()
+            self._reconstruir_arbol_lateral()
+            self._sincronizar_seleccion(nuevo)
+            self._actualizar_badge_estado("Pendiente de analizar")
+            break
+
+    def _actualizar_badge_estado(self, texto: str, es_error: bool = False) -> None:
+        # Los mensajes se reservan para la barra de estado, sin ocupar el lienzo.
+        self.statusBar().showMessage(texto.lstrip("• "), 5000)
+        if "Análisis completo" not in texto:
+            self._detener_animacion()
+            self._limpiar_resultados()
+
+    def _limpiar_resultados(self) -> None:
+        self.tabla_nodos.setRowCount(0)
+        self.tabla_lecturas.setRowCount(0)
+        self.tabla_variables.setRowCount(0)
+        self.caja_ecuaciones.clear()
+        self._limpiar_matriz()
+        self.lbl_estado_resultados.setText("Ejecuta la simulación para ver resultados")
+        for item in self.escena_circuito.componentes_graficos.values():
+            item.voltaje_lectura = "—"
+            item.corriente_lectura = "—"
+            item.potencia_lectura = "—"
+        self.lbl_valor_voltaje_prop.setText("—")
+        self.lbl_valor_corriente_prop.setText("—")
+        self.lbl_valor_potencia_prop.setText("—")
 
     def _mostrar_ventana_error_calculo(self, titulo: str, detalle: str) -> None:
         """
@@ -1293,13 +1834,28 @@ class VentanaSimuladorDC(QMainWindow):
         el error ocurrido al intentar analizar el circuito.
         """
         self._actualizar_badge_estado("• Error en el cálculo", es_error=True)
-        cuadro_error = QMessageBox(self)
-        cuadro_error.setIcon(QMessageBox.Icon.Critical)
-        cuadro_error.setWindowTitle("Error al Analizar el Circuito")
-        cuadro_error.setText(f"<b>{titulo}</b>")
-        cuadro_error.setInformativeText(detalle)
-        cuadro_error.setStandardButtons(QMessageBox.StandardButton.Ok)
-        cuadro_error.exec()
+        self._mostrar_estado_simulacion(False, f"{titulo}\n\n{detalle}")
+
+    def _mostrar_estado_simulacion(self, correcto: bool, detalle: str) -> None:
+        if hasattr(self, "_dialogo_estado"):
+            self._dialogo_estado.close()
+        dialogo = QDialog(self)
+        dialogo.setWindowTitle("Estado de simulación")
+        dialogo.resize(520, 270)
+        contenido = QVBoxLayout(dialogo)
+        titulo = QLabel("Simulación completada" if correcto else "No se pudo completar")
+        titulo.setStyleSheet("font-size: 16px; font-weight: 700; color: " + ("#147b69" if correcto else "#b02a37") + ";")
+        contenido.addWidget(titulo)
+        consola = QTextEdit()
+        consola.setReadOnly(True)
+        metodo = "lazos independientes (mallas)" if self.btn_mallas.isChecked() else "nodos (MNA)"
+        consola.setPlainText(f"Análisis DC: {metodo}\nEstado: " + ("correcto" if correcto else "error") + "\n\n" + detalle)
+        contenido.addWidget(consola)
+        cerrar = QPushButton("Cerrar")
+        cerrar.clicked.connect(dialogo.close)
+        contenido.addWidget(cerrar, alignment=Qt.AlignmentFlag.AlignRight)
+        self._dialogo_estado = dialogo
+        dialogo.show()
 
     def _slot_eliminar_componente_actual(self) -> None:
         """
@@ -1342,13 +1898,17 @@ class VentanaSimuladorDC(QMainWindow):
             self.input_valor_prop.clear()
 
     def _slot_limpiar_lienzo(self) -> None:
+        self._guardar_punto_deshacer()
+        self.escena_circuito.blockSignals(True)
         self.escena_circuito.clear()
         self.escena_circuito.componentes_graficos.clear()
         self.escena_circuito.cables_graficos.clear()
+        self.escena_circuito.blockSignals(False)
         self.arbol_circuito.clear()
+        self.chk_ref_n0.setChecked(False)
         self.tabla_lecturas.setRowCount(0)
         self.caja_ecuaciones.clear()
-        self.caja_matriz.clear()
+        self._limpiar_matriz()
         self._actualizar_badge_estado("• Lienzo vacío (Arrastra componentes)")
 
     def _slot_componente_soltado_en_escena(self, comp_item: ComponenteGraficoItem) -> None:
@@ -1365,10 +1925,9 @@ class VentanaSimuladorDC(QMainWindow):
         self.arbol_circuito.clear()
         self._items_arbol_por_id.clear()
 
-        raiz = QTreeWidgetItem(self.arbol_circuito, ["circuito-mna-ccvs", ""])
-        raiz.setFont(0, QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-
-        rama_comp = QTreeWidgetItem(raiz, ["Componentes", ""])
+        rama_comp = QTreeWidgetItem(self.arbol_circuito, ["Componentes", ""])
+        rama_comp.setFont(0, QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        rama_comp.setForeground(0, QBrush(QColor("#1d3835")))
         nodos_vistos = set()
 
         for id_c, item in self.escena_circuito.componentes_graficos.items():
@@ -1380,21 +1939,31 @@ class VentanaSimuladorDC(QMainWindow):
             nodos_vistos.add(nod_b)
 
             fila_arbol = QTreeWidgetItem(
-                rama_comp, [id_c, f"{item.valor_str} {item.unidad_simbolo}"]
+                rama_comp, [id_c, f"{float(item.valor_str) / item.factor_unidad:g} {item.unidad_simbolo}"]
             )
             fila_arbol.setTextAlignment(
-                1, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                1, Qt.AlignmentFlag.AlignCenter
             )
             fila_arbol.setForeground(1, QBrush(QColor("#6C757D")))
+            fila_arbol.setForeground(0, QBrush(QColor("#1d3835")))
+            fila_arbol.setToolTip(0, id_c)
+            fila_arbol.setToolTip(1, fila_arbol.text(1))
             fila_arbol.setData(0, Qt.ItemDataRole.UserRole, id_c)
             self._items_arbol_por_id[id_c] = fila_arbol
 
-        rama_nodos = QTreeWidgetItem(raiz, ["Nodos", ""])
-        texto_nodos = " · ".join(sorted(nodos_vistos)) if nodos_vistos else "GND"
-        item_nodos = QTreeWidgetItem(rama_nodos, [texto_nodos, ""])
-        item_nodos.setForeground(0, QBrush(QColor("#6C757D")))
+        rama_nodos = QTreeWidgetItem(self.arbol_circuito, ["Nodos", ""])
+        rama_nodos.setFont(0, QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+        rama_nodos.setForeground(0, QBrush(QColor("#1d3835")))
+        for nodo in sorted(nodos_vistos or {"GND"}):
+            item_nodo = QTreeWidgetItem(rama_nodos, [nodo, ""])
+            item_nodo.setForeground(0, QBrush(QColor("#536d67")))
+            item_nodo.setToolTip(0, nodo)
 
         self.arbol_circuito.expandAll()
+        self.chk_ref_n0.setChecked(any(
+            item.tipo_catalogo == "TIERRA" and item.terminal_a.cables_conectados
+            for item in self.escena_circuito.componentes_graficos.values()
+        ))
         num_c = len(self._items_arbol_por_id)
         self.lbl_conteo_topologia.setText(
             f"{len(nodos_vistos)} nodos · {num_c} componentes"
@@ -1408,8 +1977,16 @@ class VentanaSimuladorDC(QMainWindow):
         if id_comp not in self.escena_circuito.componentes_graficos:
             return
 
+        for cable in self.escena_circuito.cables_graficos:
+            if cable.resaltado_nodo:
+                cable.resaltado_nodo = False
+                cable.update()
+
         self._id_actual = id_comp
         comp_item = self.escena_circuito.componentes_graficos[id_comp]
+        self.input_valor_prop.setEnabled(True)
+        self.btn_aplicar_valor.setEnabled(True)
+        self.btn_eliminar_prop.setEnabled(True)
 
         self.lbl_badge_elemento.setText(comp_item.id_ref)
         self.lbl_tipo_elemento.setText(comp_item.nombre_tipo_legible)
@@ -1417,7 +1994,7 @@ class VentanaSimuladorDC(QMainWindow):
         etq_b = comp_item.terminal_b.etiqueta_nodo
         self.lbl_nodos_entre.setText(f"Entre {etq_a} y {etq_b}")
         self.lbl_etiqueta_valor.setText(comp_item.etiqueta_propiedad_valor)
-        self.input_valor_prop.setText(comp_item.valor_str)
+        self.input_valor_prop.setText(f"{float(comp_item.valor_str) / comp_item.factor_unidad:g}")
         self.lbl_simbolo_unidad.setText(comp_item.unidad_simbolo)
         self.lbl_val_terminal_ini.setText(etq_a)
         self.lbl_val_terminal_fin.setText(etq_b)
@@ -1444,6 +2021,57 @@ class VentanaSimuladorDC(QMainWindow):
         it = self.tabla_lecturas.item(fila, 0)
         if it:
             self._sincronizar_seleccion(it.text())
+            item = self.escena_circuito.componentes_graficos.get(it.text())
+            if item:
+                self.vista_circuito.ensureVisible(item, 40, 40)
+
+    def _resaltar_nodo(self, id_nodo: int) -> None:
+        self._id_actual = ""
+        self.lbl_badge_elemento.setText("Nodo")
+        self.lbl_tipo_elemento.setText("Nodo seleccionado")
+        self.lbl_nodos_entre.setText("Conexiones resaltadas en el lienzo")
+        self.input_valor_prop.clear()
+        self.input_valor_prop.setEnabled(False)
+        self.btn_aplicar_valor.setEnabled(False)
+        self.btn_eliminar_prop.setEnabled(False)
+        self.lbl_val_terminal_ini.setText("—")
+        self.lbl_val_terminal_fin.setText("—")
+        self.lbl_valor_voltaje_prop.setText("—")
+        self.lbl_valor_corriente_prop.setText("—")
+        self.lbl_valor_potencia_prop.setText("—")
+        self.escena_circuito.blockSignals(True)
+        self.escena_circuito.clearSelection()
+        self.escena_circuito.blockSignals(False)
+        primer_cable = None
+        for cable in self.escena_circuito.cables_graficos:
+            cable.resaltado_nodo = cable.terminal_origen.id_nodo == id_nodo
+            if cable.resaltado_nodo and primer_cable is None:
+                primer_cable = cable
+            cable.update()
+        if primer_cable:
+            self.vista_circuito.ensureVisible(primer_cable, 40, 40)
+
+    def _seleccionar_nodo_resultado(self, fila: int, columna: int) -> None:
+        celda = self.tabla_nodos.item(fila, 0)
+        if celda:
+            id_nodo = celda.data(Qt.ItemDataRole.UserRole)
+            if id_nodo is not None:
+                self._resaltar_nodo(id_nodo)
+
+    def _seleccionar_variable_resultado(self, fila: int, columna: int) -> None:
+        celda = self.tabla_variables.item(fila, 0)
+        if not celda:
+            return
+        destino = celda.data(Qt.ItemDataRole.UserRole)
+        if not destino:
+            return
+        if destino[0] == "nodo":
+            self._resaltar_nodo(destino[1])
+        elif destino[0] == "componente":
+            self._sincronizar_seleccion(destino[1])
+            item = self.escena_circuito.componentes_graficos.get(destino[1])
+            if item:
+                self.vista_circuito.ensureVisible(item, 40, 40)
 
     def _slot_aplicar_valor_propiedad(self) -> None:
         if self._id_actual not in self.escena_circuito.componentes_graficos:
@@ -1452,7 +2080,7 @@ class VentanaSimuladorDC(QMainWindow):
         texto = self.input_valor_prop.text().strip().replace(",", ".")
         try:
             val = float(texto)
-            if comp_item.tipo_catalogo == "RESISTENCIA" and val <= 0:
+            if not math.isfinite(val) or (comp_item.tipo_catalogo == "RESISTENCIA" and val <= 0):
                 raise ValueError(
                     f"La resistencia '{comp_item.id_ref}' debe tener un valor estrictamente mayor que cero (> 0 Ω)."
                 )
@@ -1465,7 +2093,9 @@ class VentanaSimuladorDC(QMainWindow):
             )
             return
 
-        comp_item.valor_str = str(int(val)) if val.is_integer() else f"{val:.2f}"
+        self._guardar_punto_deshacer()
+        comp_item.prepareGeometryChange()
+        comp_item.valor_str = str(val * comp_item.factor_unidad)
         comp_item.update()
         self._reconstruir_arbol_lateral()
         self._actualizar_badge_estado("• Pendiente de analizar")
@@ -1476,6 +2106,7 @@ class VentanaSimuladorDC(QMainWindow):
         eléctrico (Módulo 1), resuelve el sistema MNA (Módulo 2) y, si ocurre
         cualquier error topológico o numérico, despliega una ventana emergente de error.
         """
+        self._analisis_exitoso = False
         try:
             # 0. Recalcular conectividad de nodos a partir de los cables actuales
             self.escena_circuito.recalcular_nodos_desde_cables()
@@ -1557,8 +2188,11 @@ class VentanaSimuladorDC(QMainWindow):
                 )
 
             # 3. Construir sistema MNA y resolver con NumPy y SymPy
-            sistema = AnalizadorNodos(ckt).construir_sistema()
-            solucion = MotorNumericoNumPy.resolver(sistema)
+            if self.btn_mallas.isChecked():
+                sistema, solucion = AnalizadorMallas(ckt).resolver()
+            else:
+                sistema = AnalizadorNodos(ckt).construir_sistema()
+                solucion = MotorNumericoNumPy.resolver(sistema)
             reporte = AnalizadorSimbolicoYResultados.calcular_magnitudes_circuito(
                 ckt, sistema, solucion
             )
@@ -1588,32 +2222,31 @@ class VentanaSimuladorDC(QMainWindow):
             )
             return
 
-        # 4. Actualizar tarjetas de Voltajes de Nodo V1, V2, V3
-        v1 = solucion.voltajes_nodos.get(1, 0.0)
-        v2 = solucion.voltajes_nodos.get(2, 0.0)
-        v3 = solucion.voltajes_nodos.get(3, 0.0)
-        self.lbl_val_v1.setText(f"{v1:.2f}".replace(".", ","))
-        self.lbl_val_v2.setText(f"{v2:.2f}".replace(".", ","))
-        self.lbl_val_v3.setText(f"{v3:.2f}".replace(".", ","))
-
-        if "R_5" in reporte.resultados_elementos:
-            res_r5 = reporte.resultados_elementos["R_5"]
-            self.lbl_resumen_iphi.setText(
-                f"i_φ (V1→V2) = {res_r5.corriente_ab:.2f} A  |  Potencia disipada en R_5 (5 Ω):"
-            )
-            self.lbl_potencia_5ohm.setText(
-                f"{res_r5.potencia_w:.3f} W".replace(".", ",")
-            )
-        else:
-            self.lbl_resumen_iphi.setText(
-                f"Potencia total disipada en el circuito:"
-            )
-            self.lbl_potencia_5ohm.setText(
-                f"{reporte.potencia_total_disipada:.3f} W".replace(".", ",")
-            )
+        # Mostrar todos los nodos resueltos, incluida la referencia y los auxiliares.
+        nombres_nodos = {n.id_nodo: n.nombre for n in ckt.nodos}
+        nodos_resueltos = sorted(solucion.voltajes_nodos.items())
+        self.tabla_nodos.setRowCount(len(nodos_resueltos))
+        for fila, (id_nodo, voltaje) in enumerate(nodos_resueltos):
+            nombre = nombres_nodos.get(id_nodo, f"N{id_nodo}")
+            celda_nodo = self._celda_centrada(nombre)
+            celda_nodo.setData(Qt.ItemDataRole.UserRole, id_nodo)
+            self.tabla_nodos.setItem(fila, 0, celda_nodo)
+            self.tabla_nodos.setItem(fila, 1, self._celda_centrada(f"{voltaje:.3f} V".replace(".", ",")))
+        self.lbl_estado_resultados.setText("Resultados de la última simulación")
 
         # 5. Actualizar tabla de lecturas por componente
         elementos_lista = list(reporte.resultados_elementos.values())
+        variables = [(f"V({nombres_nodos.get(n, f'N{n}')})", v, "V", ("nodo", n)) for n, v in nodos_resueltos]
+        for resultado in elementos_lista:
+            variables.extend([(f"I({resultado.nombre})", resultado.corriente_ab, "A", ("componente", resultado.nombre)),
+                              (f"P({resultado.nombre})", resultado.potencia_w, "W", ("componente", resultado.nombre))])
+        self.tabla_variables.setRowCount(len(variables))
+        for fila_variable, (nombre_variable, valor_variable, unidad_variable, destino) in enumerate(variables):
+            for columna, texto in enumerate((nombre_variable, f"{valor_variable:.6g}".replace(".", ","), unidad_variable)):
+                celda = self._celda_centrada(texto)
+                if columna == 0:
+                    celda.setData(Qt.ItemDataRole.UserRole, destino)
+                self.tabla_variables.setItem(fila_variable, columna, celda)
         self.tabla_lecturas.setRowCount(len(elementos_lista))
 
         for fila, r_el in enumerate(elementos_lista):
@@ -1627,32 +2260,39 @@ class VentanaSimuladorDC(QMainWindow):
                 g_item.corriente_lectura = i_str
                 g_item.potencia_lectura = p_str
 
-            self.tabla_lecturas.setItem(fila, 0, QTableWidgetItem(r_el.nombre))
+            self.tabla_lecturas.setItem(fila, 0, self._celda_centrada(r_el.nombre))
             self.tabla_lecturas.setItem(
-                fila, 1, QTableWidgetItem(f"{r_el.nodo_a} → {r_el.nodo_b}")
+                fila, 1, self._celda_centrada(f"{r_el.nodo_a} → {r_el.nodo_b}")
             )
-            self.tabla_lecturas.setItem(fila, 2, QTableWidgetItem(v_str))
-            self.tabla_lecturas.setItem(fila, 3, QTableWidgetItem(i_str))
-            self.tabla_lecturas.setItem(fila, 4, QTableWidgetItem(p_str))
+            self.tabla_lecturas.setItem(fila, 2, self._celda_centrada(v_str))
+            self.tabla_lecturas.setItem(fila, 3, self._celda_centrada(i_str))
+            self.tabla_lecturas.setItem(fila, 4, self._celda_centrada(p_str))
             self.tabla_lecturas.setRowHeight(fila, 28)
 
         # 6. Actualizar visores de Ecuaciones (SymPy) y Matriz del sistema (NumPy)
         self.caja_ecuaciones.setPlainText("\n".join(reporte.ecuaciones_texto))
-        texto_matriz = (
-            f"Incógnitas x = {sistema.etiquetas_incognitas}\n\n"
-            f"Matriz A:\n{sistema.matriz_A}\n\n"
-            f"Vector b:\n{sistema.vector_b}\n\n"
-            f"Solución x:\n{solucion.vector_x}"
-        )
-        self.caja_matriz.setPlainText(texto_matriz)
+        self._mostrar_matriz(sistema, solucion)
 
         self._actualizar_badge_estado("• Análisis completo", es_error=False)
+        self._corrientes_calculadas = {r.nombre: r.corriente_ab for r in elementos_lista}
+        self._comparacion_actual = comparar_fase1(ckt, solucion, reporte)
+        for cable in self.escena_circuito.cables_graficos:
+            cable.establecer_voltaje(solucion.voltajes_nodos.get(cable.terminal_origen.id_nodo))
+        self._analisis_exitoso = True
         if self._id_actual:
             self._sincronizar_seleccion(self._id_actual)
 
 
 def ejecutar_app() -> None:
+    if sys.platform == "win32":
+        # Identifica la aplicación en la barra de tareas en lugar de agruparla con Python.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CircuitosDC.Simulador.Fase3")
+        except (AttributeError, OSError):
+            pass
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent.parent / "assets" / "icono_circuito.ico")))
     ventana = VentanaSimuladorDC()
     ventana.show()
     sys.exit(app.exec())
